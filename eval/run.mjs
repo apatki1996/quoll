@@ -1,7 +1,9 @@
 // Golden-eval harness (spec: "the objective quality signal and the regression net").
 //
 // Each eval/cases/*.ts file carries inline expectations:
-//   //=> <text>                line must show a value containing <text>
+//   //=> <text>                line's value decoration must CONTAIN <text>
+//   //== <text>                line's value decoration must EQUAL <text> exactly
+//                              (catches noise/surplus a substring check misses)
 //   //~ covered|uncovered|partial   line's coverage gutter state
 //   //! <text>                 line must show an error containing <text>
 //
@@ -21,14 +23,19 @@ const require = createRequire(import.meta.url);
 const core = require(join(root, "native", `quoll-core.${process.platform}-${process.arch}.node`));
 const deno = process.env.DENO ?? "deno";
 
+// `==` (exact) is checked before `=>` (contains); the patterns are disjoint
+// (`=>` vs `==`) so a line carries at most one of them.
+const EXACT_RE = /\/\/==\s*(.*?)(?=\s*\/\/[~!]|$)/;
 const VALUE_RE = /\/\/=>\s*(.*?)(?=\s*\/\/[~!]|$)/;
 const COV_RE = /\/\/~\s*(covered|uncovered|partial)/;
 const ERR_RE = /\/\/!\s*(.*?)(?=\s*\/\/[~=]|$)/;
 
 function parseExpectations(source) {
-  const expect = { values: new Map(), coverage: new Map(), errors: new Map() };
+  const expect = { values: new Map(), exact: new Map(), coverage: new Map(), errors: new Map() };
   source.split("\n").forEach((text, i) => {
     const line = i + 1;
+    const x = text.match(EXACT_RE);
+    if (x) expect.exact.set(line, x[1].trim());
     const v = text.match(VALUE_RE);
     if (v) expect.values.set(line, v[1].trim());
     const c = text.match(COV_RE);
@@ -65,6 +72,7 @@ async function runCase(file) {
   const values = new Map(); // line -> previews[]
   const errorsAt = new Map(); // line -> message
   const hits = new Map(); // siteId -> hits
+  const siteSlot = new Map(); // siteId -> index in its line's previews (for update-in-place)
   const addValue = (line, text) => {
     if (line === undefined) return;
     if (!values.has(line)) values.set(line, []);
@@ -72,8 +80,20 @@ async function runCase(file) {
   };
   for (const raw of out.trim().split("\n")) {
     const m = JSON.parse(raw);
-    if (m.t === "value") addValue(siteById.get(m.siteId)?.line, m.value.preview);
-    else if (m.t === "console") addValue(lineMap.get(m.siteId), m.args.map((a) => a.preview).join(" "));
+    if (m.t === "value") {
+      // Mirror the session's rule: `update` (promise settling) REPLACES the
+      // site's prior preview in place; otherwise append (loops show several).
+      const line = siteById.get(m.siteId)?.line;
+      if (line === undefined) continue;
+      if (!values.has(line)) values.set(line, []);
+      const list = values.get(line);
+      if (m.update && siteSlot.has(m.siteId)) {
+        list[siteSlot.get(m.siteId)] = m.value.preview;
+      } else {
+        siteSlot.set(m.siteId, list.length);
+        list.push(m.value.preview);
+      }
+    } else if (m.t === "console") addValue(lineMap.get(m.siteId), m.args.map((a) => a.preview).join(" "));
     else if (m.t === "error" && m.siteId !== undefined) errorsAt.set(lineMap.get(m.siteId), m.message);
     else if (m.t === "cover") hits.set(m.siteId, m.hits);
   }
@@ -98,6 +118,10 @@ async function runCase(file) {
   for (const [line, want] of expect.values) {
     const got = (values.get(line) ?? []).join(", ");
     if (!got.includes(want)) failures.push(`line ${line}: value want ⊇ ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
+  }
+  for (const [line, want] of expect.exact) {
+    const got = (values.get(line) ?? []).join(", ");
+    if (got !== want) failures.push(`line ${line}: value want = ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
   }
   for (const [line, want] of expect.coverage) {
     const got = coverage.get(line) ?? "none";
