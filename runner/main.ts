@@ -34,13 +34,34 @@ function send(event: RunnerEvent): void {
   }
 }
 
+/**
+ * Pre-instrumentation line attribution (phases 2–3): the user module is a
+ * data: URL whose lines match the source 1:1, so the innermost data:-URL
+ * stack frame gives the source line. siteId == 1-based line number — the
+ * convention shared with the host's identityInstrument(). Both disappear
+ * when real instrumented capture calls land in phase 4.
+ */
+// NB: Deno elides long data: URLs in stack frames ("base64,Ly8g......g==:2:9"),
+// so match any non-colon run rather than strict base64.
+const DATA_URL_FRAME = /data:application\/typescript;base64,[^\s:]+:(\d+):\d+/;
+
+function userCallLine(stack: string | undefined): number | undefined {
+  const match = stack?.match(DATA_URL_FRAME);
+  return match ? Number(match[1]) : undefined;
+}
+
 function patchConsole(): void {
   const levels: ConsoleLevel[] = ["log", "info", "warn", "error", "debug"];
   for (const level of levels) {
     (console as unknown as Record<ConsoleLevel, (...args: unknown[]) => void>)[level] = (
       ...args: unknown[]
     ) => {
-      send({ t: "console", level, args: args.map(toRemoteValue) });
+      send({
+        t: "console",
+        level,
+        args: args.map(toRemoteValue),
+        siteId: userCallLine(new Error().stack),
+      });
     };
   }
 }
@@ -65,10 +86,12 @@ async function handleRun(msg: Extract<HostMsg, { t: "run" }>): Promise<never> {
     // top-level await resolves before `done` — sync pass + microtask flush.
     await import(toDataUrl(msg.code));
   } catch (err) {
+    const stack = err instanceof Error ? err.stack : undefined;
     send({
       t: "error",
       message: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      stack,
+      siteId: userCallLine(stack),
     });
   }
   send({ t: "done", durationMs: Math.round(performance.now() - start) });

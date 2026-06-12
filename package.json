@@ -21,6 +21,10 @@
       {
         "command": "quoll.start",
         "title": "Quoll: Start on Current File"
+      },
+      {
+        "command": "quoll.stop",
+        "title": "Quoll: Stop Session"
       }
     ],
     "configuration": {
@@ -30,6 +34,11 @@
           "type": "string",
           "default": "deno",
           "description": "Path to the Deno executable used for the runner sandbox."
+        },
+        "quoll.debounceMs": {
+          "type": "number",
+          "default": 300,
+          "description": "Delay after the last edit before re-running the file."
         }
       }
     }
