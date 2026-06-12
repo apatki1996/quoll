@@ -273,6 +273,10 @@ Phases 8–11 and 15 are deliberately cheap because the protocol pre-paid for th
   it's an incremental *parser* with no transform/codegen+source-map path. Optional
   only for editor-side expression-boundary detection. Skip for v1.
 - **Deno 2.x** for the runner sandbox. **napi-rs** for the Rust↔Node boundary.
+- **pnpm** is the package manager. Package the extension with
+  `vsce package --no-dependencies` — vsce can't walk pnpm's symlinked
+  `node_modules`, and it doesn't need to: esbuild bundles everything and there
+  are no runtime deps.
 - **jsdom under Deno is unproven for this use** (Quokka runs jsdom under Node).
   Deno's npm compat should cover it, but sanity-check before phase 7 — this is
   the main reason the IPC layer stays runtime-agnostic so a Node runner can be

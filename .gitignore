@@ -1,1 +1,4 @@
 conversation*
+node_modules/
+dist/
+*.vsix

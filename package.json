@@ -1,0 +1,40 @@
+{
+  "name": "quoll",
+  "displayName": "Quoll",
+  "publisher": "apatki",
+  "description": "Live runtime values inline, as you type — for JS/TS.",
+  "version": "0.0.1",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/apatki/quoll"
+  },
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "quoll.start",
+        "title": "Quoll: Start on Current File"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "vscode:prepublish": "pnpm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.96.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.5.0"
+  },
+  "packageManager": "pnpm@11.5.2"
+}

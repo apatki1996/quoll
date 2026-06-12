@@ -1,0 +1,12 @@
+.vscode/**
+src/**
+protocol/**
+node_modules/**
+esbuild.mjs
+tsconfig.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+**/*.map
+quoll-spec.md
+conversation*
+.gitignore
