@@ -48,16 +48,39 @@ export class Renderer implements vscode.Disposable {
     }),
   };
 
-  /** 1-based line -> previews observed this run (loops produce several). */
-  private values = new Map<number, string[]>();
+  /**
+   * Value previews keyed by capture siteId, so a single evolving value (a
+   * settling promise) can REPLACE its own slot rather than appending. Console
+   * output isn't site-attributed, so it gets a separate line-keyed bucket.
+   */
+  private siteValues = new Map<number, { line: number; previews: string[] }>();
+  private consoleValues = new Map<number, string[]>();
   private errors = new Map<number, string>();
   private coverage = new Map<number, CoverageState>();
 
   constructor(private readonly doc: vscode.TextDocument) {}
 
+  /** Append a fresh capture for a site (loops produce several). */
+  addSiteValue(siteId: number, line: number, preview: string): void {
+    let entry = this.siteValues.get(siteId);
+    if (!entry) this.siteValues.set(siteId, (entry = { line, previews: [] }));
+    if (entry.previews.length < MAX_VALUES_PER_LINE) entry.previews.push(preview);
+    this.apply();
+  }
+
+  /** Replace a site's latest preview in place — a value that EVOLVED (a promise
+   * settling pending → then/catch). Falls back to append if the site is unseen. */
+  updateSiteValue(siteId: number, line: number, preview: string): void {
+    const entry = this.siteValues.get(siteId);
+    if (entry && entry.previews.length > 0) entry.previews[entry.previews.length - 1] = preview;
+    else this.addSiteValue(siteId, line, preview);
+    this.apply();
+  }
+
+  /** Console output (not site-attributed) for a line. */
   addValue(line: number, preview: string): void {
-    let list = this.values.get(line);
-    if (!list) this.values.set(line, (list = []));
+    let list = this.consoleValues.get(line);
+    if (!list) this.consoleValues.set(line, (list = []));
     if (list.length < MAX_VALUES_PER_LINE) list.push(preview);
     this.apply();
   }
@@ -73,7 +96,8 @@ export class Renderer implements vscode.Disposable {
   }
 
   clear(): void {
-    this.values.clear();
+    this.siteValues.clear();
+    this.consoleValues.clear();
     this.errors.clear();
     this.coverage.clear();
     this.apply();
@@ -88,8 +112,23 @@ export class Renderer implements vscode.Disposable {
     const editors = vscode.window.visibleTextEditors.filter((e) => e.document === this.doc);
     if (editors.length === 0) return;
 
+    // Aggregate site previews (in capture order) + console output by line,
+    // joined into one end-of-line decoration per line.
+    const byLine = new Map<number, string[]>();
+    const pushLine = (line: number, preview: string) => {
+      const list = byLine.get(line) ?? [];
+      list.push(preview);
+      byLine.set(line, list);
+    };
+    for (const { line, previews } of this.siteValues.values()) {
+      for (const p of previews) pushLine(line, p);
+    }
+    for (const [line, previews] of this.consoleValues) {
+      for (const p of previews) pushLine(line, p);
+    }
+
     const valueDecos: vscode.DecorationOptions[] = [];
-    for (const [line, previews] of this.values) {
+    for (const [line, previews] of byLine) {
       const range = this.lineEnd(line);
       if (!range) continue; // line vanished since the run started; rerun is imminent
       valueDecos.push({

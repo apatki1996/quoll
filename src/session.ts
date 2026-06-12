@@ -106,11 +106,17 @@ export class QuollSession implements vscode.Disposable {
       case "value": {
         const site = this.prepared?.sites.get(msg.siteId);
         if (site) {
-          this.renderer.addValue(site.line, msg.value.preview);
           let history = this.siteValues.get(msg.siteId);
           if (!history) this.siteValues.set(msg.siteId, (history = []));
-          if (history.length >= MAX_SITE_VALUES) history.shift(); // latest always kept
-          history.push(msg.value);
+          if (msg.update && history.length > 0) {
+            // A value that evolved (promise settling): replace, don't append.
+            history[history.length - 1] = msg.value;
+            this.renderer.updateSiteValue(msg.siteId, site.line, msg.value.preview);
+          } else {
+            if (history.length >= MAX_SITE_VALUES) history.shift(); // latest always kept
+            history.push(msg.value);
+            this.renderer.addSiteValue(msg.siteId, site.line, msg.value.preview);
+          }
           this.queueUpdate();
         }
         break;
