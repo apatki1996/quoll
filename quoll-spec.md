@@ -277,6 +277,10 @@ Phases 8–11 and 15 are deliberately cheap because the protocol pre-paid for th
   `vsce package --no-dependencies` — vsce can't walk pnpm's symlinked
   `node_modules`, and it doesn't need to: esbuild bundles everything and there
   are no runtime deps.
+- **Release packaging needs per-platform VSIXs** (`vsce package --target`),
+  one napi binary per target, built in CI — local `build:core` produces only
+  the host platform's binary, and other platforms silently fall back to the
+  no-transpile identity path.
 - **jsdom under Deno is unproven for this use** (Quokka runs jsdom under Node).
   Deno's npm compat should cover it, but sanity-check before phase 7 — this is
   the main reason the IPC layer stays runtime-agnostic so a Node runner can be

@@ -11,13 +11,17 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     output,
     vscode.commands.registerCommand("quoll.start", startOnCurrentFile),
-    vscode.commands.registerCommand("quoll.stop", stopSession),
-    new vscode.Disposable(stopSession),
+    vscode.commands.registerCommand("quoll.stop", () => {
+      stopSession();
+      output.appendLine("[quoll] session stopped");
+    }),
   );
   output.appendLine("[quoll] activated");
 }
 
-export function deactivate(): void {}
+export function deactivate(): void {
+  stopSession(); // silent teardown; logging here may race output disposal
+}
 
 const SCRATCH_TEMPLATE = `// Quoll scratch
 const greeting = "hello quoll";
@@ -43,5 +47,4 @@ async function startOnCurrentFile(): Promise<void> {
 function stopSession(): void {
   session?.dispose();
   session = undefined;
-  output.appendLine("[quoll] session stopped");
 }

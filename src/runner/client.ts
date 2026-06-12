@@ -38,6 +38,10 @@ export function startRun(opts: StartRunOpts): RunHandle {
         `Install Deno or set quoll.denoPath.`,
     );
   });
+  // A failed spawn (ENOENT) destroys the stdio streams with an error; without
+  // a listener the buffered stdin write below becomes an uncaught exception
+  // in the extension host. child.on("error") above already reports the cause.
+  child.stdin.on("error", () => {});
 
   const runMsg: HostMsg = { t: "run", runId: opts.runId, code: opts.code, entry: opts.entry };
   child.stdin.write(JSON.stringify(runMsg) + "\n");

@@ -46,6 +46,11 @@ export function toRemoteValue(v: unknown): RemoteValue {
     breakLength: Infinity,
     compact: true,
   });
-  if (preview.length > MAX_PREVIEW) preview = preview.slice(0, MAX_PREVIEW - 1) + "…";
+  if (preview.length > MAX_PREVIEW) {
+    let cut = preview.slice(0, MAX_PREVIEW - 1);
+    // don't split a surrogate pair at the cut point
+    if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+    preview = cut + "…";
+  }
   return { type: classify(v), preview };
 }

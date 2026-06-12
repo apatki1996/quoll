@@ -38,8 +38,10 @@ pub struct InstrumentResult {
 }
 
 fn offset_to_line(source: &str, offset: u32) -> u32 {
-    let upto = &source[..(offset as usize).min(source.len())];
-    upto.bytes().filter(|&b| b == b'\n').count() as u32 + 1
+    // Byte slice, not &str slice: a label offset landing mid-character must
+    // not panic on a char boundary.
+    let end = (offset as usize).min(source.len());
+    source.as_bytes()[..end].iter().filter(|&&b| b == b'\n').count() as u32 + 1
 }
 
 #[napi]

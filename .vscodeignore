@@ -1,6 +1,9 @@
 .vscode/**
 src/**
 protocol/**
+crates/**
+scripts/**
+mise.toml
 node_modules/**
 esbuild.mjs
 tsconfig.json

@@ -11,11 +11,12 @@ function decodeVlq(segment: string): number[] {
   for (const char of segment) {
     const digit = CHAR_TO_INT.get(char);
     if (digit === undefined) throw new Error(`bad VLQ char: ${char}`);
-    value |= (digit & 0x1f) << shift;
+    // arithmetic, not bitwise: column deltas can exceed 32-bit `<<`/`>>>` range
+    value += (digit & 0x1f) * 2 ** shift;
     if (digit & 0x20) {
       shift += 5;
     } else {
-      fields.push(value & 1 ? -(value >>> 1) : value >>> 1);
+      fields.push(value % 2 === 1 ? -Math.floor(value / 2) : value / 2);
       value = 0;
       shift = 0;
     }

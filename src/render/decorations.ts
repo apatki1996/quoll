@@ -4,7 +4,11 @@ const MAX_LINE_RENDER = 120;
 const MAX_VALUES_PER_LINE = 100;
 
 function truncate(text: string): string {
-  return text.length > MAX_LINE_RENDER ? text.slice(0, MAX_LINE_RENDER - 1) + "…" : text;
+  if (text.length <= MAX_LINE_RENDER) return text;
+  let cut = text.slice(0, MAX_LINE_RENDER - 1);
+  // don't split a surrogate pair at the cut point
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return cut + "…";
 }
 
 /** Inline end-of-line decorations for one document: values and errors. */
