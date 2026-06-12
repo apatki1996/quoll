@@ -2,3 +2,5 @@ conversation*
 node_modules/
 dist/
 *.vsix
+crates/quoll-core/target/
+native/

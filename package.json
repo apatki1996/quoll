@@ -47,7 +47,9 @@
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "vscode:prepublish": "pnpm run build"
+    "vscode:prepublish": "pnpm run build",
+    "build:core": "node scripts/build-core.mjs",
+    "check:phase3": "node scripts/phase3-check.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

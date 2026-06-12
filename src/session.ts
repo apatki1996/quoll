@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
-import type { CaptureSite, RunnerMsg } from "../protocol/index.ts";
-import { identityInstrument } from "./instrument/identity.ts";
+import type { RunnerMsg } from "../protocol/index.ts";
+import { prepareRun, type PreparedRun } from "./instrument/index.ts";
 import { Renderer } from "./render/decorations.ts";
 import { startRun, type RunHandle } from "./runner/client.ts";
 
@@ -11,7 +11,7 @@ import { startRun, type RunHandle } from "./runner/client.ts";
 export class QuollSession implements vscode.Disposable {
   private runId = 0;
   private run: RunHandle | undefined;
-  private sites = new Map<number, CaptureSite>();
+  private prepared: PreparedRun | undefined;
   private readonly renderer: Renderer;
   private debounce: ReturnType<typeof setTimeout> | undefined;
   private readonly disposables: vscode.Disposable[] = [];
@@ -19,7 +19,7 @@ export class QuollSession implements vscode.Disposable {
   constructor(
     readonly doc: vscode.TextDocument,
     private readonly output: vscode.OutputChannel,
-    private readonly runnerMain: string,
+    private readonly extensionRoot: string,
   ) {
     this.renderer = new Renderer(doc);
     this.disposables.push(
@@ -42,23 +42,40 @@ export class QuollSession implements vscode.Disposable {
     const runId = ++this.runId;
     const config = vscode.workspace.getConfiguration("quoll");
 
-    const { code, sites } = identityInstrument(this.doc.getText(), {
-      filename: this.doc.fileName,
-      jsx: false,
-    });
-    this.sites = new Map(sites.map((s) => [s.id, s]));
-
+    this.prepared = prepareRun(
+      this.doc.getText(),
+      {
+        filename: this.doc.fileName,
+        jsx: this.doc.languageId.endsWith("react"),
+      },
+      this.extensionRoot,
+    );
     this.renderer.clear();
+
+    if (this.prepared.errors.length > 0) {
+      for (const err of this.prepared.errors) {
+        this.output.appendLine(`✗ ${err.message}`);
+        if (err.line !== undefined) this.renderer.setError(err.line, err.message);
+      }
+      return; // wait for the next edit; nothing runnable
+    }
+
     this.output.appendLine(`[quoll] run #${runId} ${this.doc.fileName}`);
     this.run = startRun({
       denoPath: config.get<string>("denoPath", "deno"),
-      runnerMain: this.runnerMain,
+      runnerMain: `${this.extensionRoot}/runner/main.ts`,
       runId,
-      code,
+      code: this.prepared.code,
       entry: this.doc.fileName,
       onMessage: (msg) => this.onMessage(msg),
       onDiagnostic: (text) => this.output.appendLine(`[runner] ${text}`),
     });
+  }
+
+  /** Stack-derived siteId (generated line) -> source line, per the phase 2–3 bridge. */
+  private sourceLineOf(siteId: number | undefined): number | undefined {
+    if (siteId === undefined) return undefined;
+    return this.prepared?.toSourceLine(siteId);
   }
 
   private onMessage(msg: RunnerMsg): void {
@@ -67,15 +84,15 @@ export class QuollSession implements vscode.Disposable {
       case "console": {
         const text = msg.args.map((a) => a.preview).join(" ");
         this.output.appendLine(text);
-        const site = msg.siteId === undefined ? undefined : this.sites.get(msg.siteId);
-        if (site) this.renderer.addValue(site.line, text);
+        const line = this.sourceLineOf(msg.siteId);
+        if (line !== undefined) this.renderer.addValue(line, text);
         break;
       }
       case "error": {
         this.output.appendLine(`✗ ${msg.message}`);
         if (msg.stack) this.output.appendLine(msg.stack);
-        const site = msg.siteId === undefined ? undefined : this.sites.get(msg.siteId);
-        if (site) this.renderer.setError(site.line, msg.message);
+        const line = this.sourceLineOf(msg.siteId);
+        if (line !== undefined) this.renderer.setError(line, msg.message);
         break;
       }
       case "done":

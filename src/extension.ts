@@ -2,12 +2,12 @@ import * as vscode from "vscode";
 import { QuollSession } from "./session.ts";
 
 let output: vscode.OutputChannel;
-let runnerMain: string;
+let extensionRoot: string;
 let session: QuollSession | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel("Quoll");
-  runnerMain = context.asAbsolutePath("runner/main.ts");
+  extensionRoot = context.extensionUri.fsPath;
   context.subscriptions.push(
     output,
     vscode.commands.registerCommand("quoll.start", startOnCurrentFile),
@@ -36,7 +36,7 @@ async function startOnCurrentFile(): Promise<void> {
     editor = await vscode.window.showTextDocument(doc);
   }
   session?.dispose();
-  session = new QuollSession(editor.document, output, runnerMain);
+  session = new QuollSession(editor.document, output, extensionRoot);
   output.show(true);
 }
 

@@ -1,0 +1,25 @@
+[package]
+name = "quoll_core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+lto = true
+strip = "symbols"
+
+[dependencies]
+napi = { version = "3.9.1", features = ["napi8"] }
+napi-derive = "3.5.6"
+oxc_allocator = "0.135.0"
+oxc_codegen = "0.135.0"
+oxc_parser = "0.135.0"
+oxc_semantic = "0.135.0"
+oxc_sourcemap = "7.0.0"
+oxc_span = "0.135.0"
+oxc_transformer = "0.135.0"
+
+[build-dependencies]
+napi-build = "2.3.2"
