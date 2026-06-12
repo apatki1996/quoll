@@ -17,6 +17,47 @@ future regression fails a test, not just memory.
 
 ---
 
+## 2026-06-12 — Guiding principle: truthful/informative output over cosmetic Quokka parity [PRINCIPLE]
+
+- **Context:** a run of Quokka-vs-Quoll comparisons kept landing the same way —
+  always-on values (kept), `λ` (dropped for `[Function …]`), iterator verbosity
+  (kept `Set Iterator { … }` over Quokka's `Iterator {}`), `n/a` (rejected for
+  `Promise { <pending> }`). They share one rule.
+- **Principle:** render the runtime's TRUTHFUL, informative output; diverge from
+  raw Deno only when it adds genuine SEMANTIC value (promise settlement →
+  `then`/`catch`), never for mere cosmetic parity. Reframes the parity matrix
+  from "match Quokka pixel-for-pixel" to "match Quokka's CAPABILITIES, in Quoll's
+  honest idiom."
+- **Why (taste AND architecture):** a value inspector earns trust by being
+  literal; and cosmetic rewrites are inherently `if (looksLikeX) return
+  customString` special-cases in `previewOf` that don't generalize — stacking
+  them is a maintenance smell, and each one moves away from the real runtime shape.
+- **Resolves — all SKIP, keep Quoll's output:** gap 3 (preview compactness),
+  gap 4 (iterator verbosity — Quoll's `Set Iterator { … }` differentiates Set vs
+  Array and shows contents: `screenshots/quoll-quokka-iterator-type.png`), gap-1
+  `n/a` idiom (`Promise { <pending> }` is conventional/correct), gap 5 `λ`.
+- **Revisit if:** a specific cosmetic rewrite earns its keep on SEMANTIC grounds
+  (the way `then`/`catch` did), or we add an opt-in "Quokka-compatible previews"
+  mode.
+
+## 2026-06-12 — Known limitation: multi-promise-per-site settlement mis-slots [KNOWN LIMITATION]
+
+- **Context:** settlement re-emits replace the site's *last* value, identified
+  only by `siteId` (`session.ts` / `aggregate.ts` `update` handling). If ONE
+  capture site produces several pending promises — e.g. `for (const u of urls)
+  fetch(u)` — that settle out of order, a settled value can land on the wrong
+  slot. The common case (one promise per site, `const p = …`) is correct.
+- **Decision: document, don't fix yet.** It's a genuine correctness bug but
+  low-frequency (multiple promises captured at a *single* site).
+- **The fix is structural, not an `if`:** it needs a per-capture identity — a
+  capture-index emitted alongside `siteId` so the host can match a settlement to
+  the exact pending slot. That's a small additive protocol field + runner/host
+  threading, not a special-case. Deferred until loop-of-promises capture actually
+  matters in practice.
+- **Revisit if:** users hit it (out-of-order settled values on a loop that creates
+  promises), or we build anything else that needs per-capture identity (then do
+  both at once).
+
 ## 2026-06-12 — Quoll shows ALL expression values: DEFAULT, not enshrined [CONFIGURABLE]
 
 - **Context:** Quokka only renders an inline value when you opt in — a
@@ -110,16 +151,11 @@ protocol changes. That's a real validation of the upfront design.
 - **Verified by `eval/cases/async_settle.ts`** — was red (`Promise { <pending> }`),
   now green (`then 42`); `await p` on the next line still passes. Plus 2 unit
   tests in `runner/serialize_test.ts`.
-- **Still pending:** the `n/a` idiom for promises that *never* settle (Quoll
-  leaves them at `Promise { <pending> }`); rendering would require relabelling
-  un-settled captured promises at `exit`. Low priority.
-- **Known limitation (code review, 2026-06-12):** settlement `update` replaces
-  the site's *last* value, identified only by `siteId`. If ONE capture site
-  produces several pending promises (e.g. `for (const u of urls) fetch(u)`) that
-  settle out of order, a settled value can land on the wrong slot. The common
-  case (one promise per site, `const p = …`) is correct. A proper fix needs a
-  per-capture identity (a capture-index alongside `siteId`), deferred until
-  loop-of-promises capture actually matters.
+- **Decided SKIP (2026-06-12):** the `n/a` idiom for never-settling promises is a
+  Quokka-ism — `Promise { <pending> }` is the conventional, correct form. Keep it
+  (truthful-over-cosmetic principle).
+- **Known limitation:** out-of-order settlement of multiple promises captured at
+  ONE site can mis-slot — see the standalone "multi-promise-per-site" entry above.
 
 **Gap 2 — Async wait budget. [DIRECTION SET]**
 - Quokka waited the **full 10 s** for `setTimeout(() => resolve(42), 10000)` then
@@ -148,15 +184,16 @@ protocol changes. That's a real validation of the upfront design.
   compact and surfaces symbol keys with a `…` truncation; (b) Quokka appears to
   auto-capture *fewer* lines by default (the dump only appeared under an explicit
   `//?`), whereas Quoll captures the `setTimeout(...)` return everywhere.
-- Pending decision (downgraded): match Quokka's preview compactness; revisit
-  whether every statement value should auto-render or only on request. Cosmetic /
-  density, not correctness.
+- **Decided SKIP (2026-06-12):** cosmetic / density only — keep Deno's truthful
+  preview (truthful-over-cosmetic principle). The "auto-render vs on-request"
+  sub-question is settled separately by the always-on entry (default-on,
+  configurable).
 
-**Gap 4 — Preview verbosity.**
-- Iterator: Quoll → `Object [Array Iterator] {}`; Quokka → `Iterator {}`
-  (`screenshots/Screenshot 2026-06-12 at 10.27.44 AM.png` vs
-  `screenshots/image.png`). Cosmetic preview-string normalization.
-- Pending decision: match Quokka's terser preview forms (low priority).
+**Gap 4 — Preview verbosity. [DECIDED SKIP 2026-06-12]**
+- Iterator: Quoll → `Set Iterator { [Function: f], … }`; Quokka → `Iterator {}`
+  (`screenshots/quoll-quokka-iterator-type.png`). Quoll's is MORE informative — it
+  differentiates Set vs Array iterators and shows contents. Keep it
+  (truthful-over-cosmetic principle); not a gap, a feature.
 
 **Gap 5 — Function naming.**
 - Quoll keeps Deno's truthful `[Function (anonymous)]` / `[Function: name]`
