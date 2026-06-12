@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import type { RemoteValue, RunnerMsg } from "../protocol/index.ts";
 import { prepareRun, type PreparedRun } from "./instrument/index.ts";
-import { Renderer, type CoverageState } from "./render/decorations.ts";
+import { Aggregator } from "./render/aggregate.ts";
+import { Renderer } from "./render/decorations.ts";
 import { startRun, type RunHandle } from "./runner/client.ts";
 
 /** Host-side outcome of a lazy expansion ("gone": runner process is dead). */
@@ -9,8 +10,6 @@ export type ExpandOutcome =
   | { entries: { key: string; value: RemoteValue }[] }
   | { error: "evicted" | "unknown" | "gone" };
 
-/** Per-site capture history kept for the value explorer (latest always kept). */
-const MAX_SITE_VALUES = 100;
 const EXPAND_TIMEOUT_MS = 3000;
 
 /**
@@ -21,9 +20,8 @@ export class QuollSession implements vscode.Disposable {
   private runId = 0;
   private run: RunHandle | undefined;
   private prepared: PreparedRun | undefined;
-  private coverHits = new Map<number, number>();
-  private coverRecomputeQueued = false;
-  private siteValues = new Map<number, RemoteValue[]>();
+  private agg: Aggregator | undefined;
+  private renderQueued = false;
   private nextReqId = 1;
   private readonly pendingExpands = new Map<number, (outcome: ExpandOutcome) => void>();
   private updateQueued = false;
@@ -68,17 +66,20 @@ export class QuollSession implements vscode.Disposable {
       },
       this.extensionRoot,
     );
-    this.coverHits = new Map();
-    this.siteValues = new Map();
+    this.agg = new Aggregator(this.prepared.sites, (id) =>
+      id === undefined ? undefined : this.prepared?.toSourceLine(id),
+    );
     this.failPendingExpands();
     this.queueUpdate();
     this.renderer.clear();
 
     if (this.prepared.errors.length > 0) {
+      const errLines = new Map<number, string>();
       for (const err of this.prepared.errors) {
         this.output.appendLine(`✗ ${err.message}`);
-        if (err.line !== undefined) this.renderer.setError(err.line, err.message);
+        if (err.line !== undefined) errLines.set(err.line, err.message);
       }
+      this.renderer.setErrors(errLines);
       return; // wait for the next edit; nothing runnable
     }
 
@@ -94,60 +95,26 @@ export class QuollSession implements vscode.Disposable {
     });
   }
 
-  /** Stack-derived siteId (generated line) -> source line, per the phase 2–3 bridge. */
-  private sourceLineOf(siteId: number | undefined): number | undefined {
-    if (siteId === undefined) return undefined;
-    return this.prepared?.toSourceLine(siteId);
-  }
-
   private onMessage(msg: RunnerMsg): void {
     if (msg.runId !== this.runId) return; // stale run
+    this.agg?.ingest(msg); // fold value/console/cover/error into render state
     switch (msg.t) {
-      case "value": {
-        const site = this.prepared?.sites.get(msg.siteId);
-        if (site) {
-          let history = this.siteValues.get(msg.siteId);
-          if (!history) this.siteValues.set(msg.siteId, (history = []));
-          if (msg.update && history.length > 0) {
-            // A value that evolved (promise settling): replace, don't append.
-            history[history.length - 1] = msg.value;
-            this.renderer.updateSiteValue(msg.siteId, site.line, msg.value.preview);
-          } else {
-            if (history.length >= MAX_SITE_VALUES) history.shift(); // latest always kept
-            history.push(msg.value);
-            this.renderer.addSiteValue(msg.siteId, site.line, msg.value.preview);
-          }
-          this.queueUpdate();
-        }
+      case "value":
+        this.scheduleRender();
+        this.queueUpdate(); // explorer roots changed
         break;
-      }
       case "cover":
-        this.coverHits.set(msg.siteId, msg.hits);
-        // Coalesce: the runner flushes one message per site in a burst that
-        // parses within one tick. Recomputing per message is O(sites²) and
-        // paints not-yet-reported sites red before they flip green.
-        if (!this.coverRecomputeQueued) {
-          this.coverRecomputeQueued = true;
-          queueMicrotask(() => {
-            this.coverRecomputeQueued = false;
-            if (msg.runId === this.runId) this.renderer.setCoverage(this.computeCoverage());
-          });
-        }
+        this.scheduleRender();
         break;
-      case "console": {
-        const text = msg.args.map((a) => a.preview).join(" ");
-        this.output.appendLine(text);
-        const line = this.sourceLineOf(msg.siteId);
-        if (line !== undefined) this.renderer.addValue(line, text);
+      case "console":
+        this.output.appendLine(msg.args.map((a) => a.preview).join(" "));
+        this.scheduleRender();
         break;
-      }
-      case "error": {
+      case "error":
         this.output.appendLine(`✗ ${msg.message}`);
         if (msg.stack) this.output.appendLine(msg.stack);
-        const line = this.sourceLineOf(msg.siteId);
-        if (line !== undefined) this.renderer.setError(line, msg.message);
+        this.scheduleRender();
         break;
-      }
       case "done":
         this.output.appendLine(`[quoll] done in ${msg.durationMs}ms`);
         break;
@@ -194,12 +161,7 @@ export class QuollSession implements vscode.Disposable {
 
   /** Explorer roots: the current run's captured values, by source line. */
   valueRoots(): { line: number; values: RemoteValue[] }[] {
-    const roots: { line: number; values: RemoteValue[] }[] = [];
-    for (const [siteId, values] of this.siteValues) {
-      const site = this.prepared?.sites.get(siteId);
-      if (site && values.length > 0) roots.push({ line: site.line, values });
-    }
-    return roots.sort((a, b) => a.line - b.line);
+    return this.agg?.valueSites() ?? [];
   }
 
   private failPendingExpands(): void {
@@ -217,24 +179,22 @@ export class QuollSession implements vscode.Disposable {
   }
 
   /**
-   * Line state from coverage sites: any unhit site on a line with hit sites
-   * (e.g. an untaken ternary arm) renders PARTIAL; all-hit → covered;
-   * none-hit → uncovered. Lines without sites get no gutter mark.
+   * Push the Aggregator's latest snapshot to the renderer, coalesced to one
+   * paint per microtask: the runner flushes value/cover bursts that parse
+   * within a tick, so recomputing per message is O(sites²) and would flash
+   * not-yet-reported coverage sites red before they flip green.
    */
-  private computeCoverage(): Map<number, CoverageState> {
-    const lineState = new Map<number, { hit: boolean; missed: boolean }>();
-    for (const site of this.prepared?.sites.values() ?? []) {
-      if (site.kind !== "statement" && site.kind !== "branch") continue;
-      const state = lineState.get(site.line) ?? { hit: false, missed: false };
-      if ((this.coverHits.get(site.id) ?? 0) > 0) state.hit = true;
-      else state.missed = true;
-      lineState.set(site.line, state);
-    }
-    const coverage = new Map<number, CoverageState>();
-    for (const [line, state] of lineState) {
-      coverage.set(line, state.hit && state.missed ? "partial" : state.hit ? "covered" : "uncovered");
-    }
-    return coverage;
+  private scheduleRender(): void {
+    if (this.renderQueued) return;
+    this.renderQueued = true;
+    const runId = this.runId;
+    queueMicrotask(() => {
+      this.renderQueued = false;
+      if (runId !== this.runId || !this.agg) return; // superseded by a newer run
+      this.renderer.setValues(this.agg.lineValues());
+      this.renderer.setCoverage(this.agg.coverage());
+      this.renderer.setErrors(this.agg.errorLines());
+    });
   }
 
   dispose(): void {

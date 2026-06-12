@@ -16,6 +16,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { Aggregator } from "../src/render/aggregate.ts";
 import { buildLineMap } from "../src/instrument/sourcemap.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -34,6 +35,10 @@ function parseExpectations(source) {
   const expect = { values: new Map(), exact: new Map(), coverage: new Map(), errors: new Map() };
   source.split("\n").forEach((text, i) => {
     const line = i + 1;
+    // Annotations only ever trail code; a pure-comment line is prose, so don't
+    // let a `//==`/`//=>` written inside an explanatory comment become an
+    // assertion.
+    if (/^\s*\/\//.test(text)) return;
     const x = text.match(EXACT_RE);
     if (x) expect.exact.set(line, x[1].trim());
     const v = text.match(VALUE_RE);
@@ -68,51 +73,15 @@ async function runCase(file) {
   });
   await new Promise((resolve) => child.on("close", resolve));
 
-  // Reproduce the session's attribution rules.
-  const values = new Map(); // line -> previews[]
-  const errorsAt = new Map(); // line -> message
-  const hits = new Map(); // siteId -> hits
-  const siteSlot = new Map(); // siteId -> index in its line's previews (for update-in-place)
-  const addValue = (line, text) => {
-    if (line === undefined) return;
-    if (!values.has(line)) values.set(line, []);
-    values.get(line).push(text);
-  };
-  for (const raw of out.trim().split("\n")) {
-    const m = JSON.parse(raw);
-    if (m.t === "value") {
-      // Mirror the session's rule: `update` (promise settling) REPLACES the
-      // site's prior preview in place; otherwise append (loops show several).
-      const line = siteById.get(m.siteId)?.line;
-      if (line === undefined) continue;
-      if (!values.has(line)) values.set(line, []);
-      const list = values.get(line);
-      if (m.update && siteSlot.has(m.siteId)) {
-        list[siteSlot.get(m.siteId)] = m.value.preview;
-      } else {
-        siteSlot.set(m.siteId, list.length);
-        list.push(m.value.preview);
-      }
-    } else if (m.t === "console") addValue(lineMap.get(m.siteId), m.args.map((a) => a.preview).join(" "));
-    else if (m.t === "error" && m.siteId !== undefined) errorsAt.set(lineMap.get(m.siteId), m.message);
-    else if (m.t === "cover") hits.set(m.siteId, m.hits);
-  }
-
-  // Coverage state per line from sites + hits (the session's rule).
-  const lineState = new Map(); // line -> { hit: bool, missed: bool }
-  for (const s of sites) {
-    if (s.kind !== "statement" && s.kind !== "branch") continue;
-    const st = lineState.get(s.line) ?? { hit: false, missed: false };
-    if ((hits.get(s.id) ?? 0) > 0) st.hit = true;
-    else st.missed = true;
-    lineState.set(s.line, st);
-  }
-  const coverage = new Map(
-    [...lineState].map(([line, st]) => [
-      line,
-      st.hit && st.missed ? "partial" : st.hit ? "covered" : "uncovered",
-    ]),
-  );
+  // Fold the runner stream with the REAL host aggregator (shared code, not a
+  // replica): value/cover attribute via the capture sites, console/error via
+  // the source map. The harness now tests the exact attribution + aggregation
+  // the editor uses.
+  const agg = new Aggregator(siteById, (siteId) => lineMap.get(siteId));
+  for (const raw of out.trim().split("\n")) agg.ingest(JSON.parse(raw));
+  const values = agg.lineValues(); // line -> previews[]
+  const coverage = agg.coverage(); // line -> covered|uncovered|partial
+  const errorsAt = agg.errorLines(); // line -> message
 
   const failures = [];
   for (const [line, want] of expect.values) {
