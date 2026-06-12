@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { RunnerMsg } from "../protocol/index.ts";
 import { prepareRun, type PreparedRun } from "./instrument/index.ts";
-import { Renderer } from "./render/decorations.ts";
+import { Renderer, type CoverageState } from "./render/decorations.ts";
 import { startRun, type RunHandle } from "./runner/client.ts";
 
 /**
@@ -12,6 +12,8 @@ export class QuollSession implements vscode.Disposable {
   private runId = 0;
   private run: RunHandle | undefined;
   private prepared: PreparedRun | undefined;
+  private coverHits = new Map<number, number>();
+  private coverRecomputeQueued = false;
   private readonly renderer: Renderer;
   private debounce: ReturnType<typeof setTimeout> | undefined;
   private readonly disposables: vscode.Disposable[] = [];
@@ -50,6 +52,7 @@ export class QuollSession implements vscode.Disposable {
       },
       this.extensionRoot,
     );
+    this.coverHits = new Map();
     this.renderer.clear();
 
     if (this.prepared.errors.length > 0) {
@@ -81,6 +84,24 @@ export class QuollSession implements vscode.Disposable {
   private onMessage(msg: RunnerMsg): void {
     if (msg.runId !== this.runId) return; // stale run
     switch (msg.t) {
+      case "value": {
+        const site = this.prepared?.sites.get(msg.siteId);
+        if (site) this.renderer.addValue(site.line, msg.value.preview);
+        break;
+      }
+      case "cover":
+        this.coverHits.set(msg.siteId, msg.hits);
+        // Coalesce: the runner flushes one message per site in a burst that
+        // parses within one tick. Recomputing per message is O(sites²) and
+        // paints not-yet-reported sites red before they flip green.
+        if (!this.coverRecomputeQueued) {
+          this.coverRecomputeQueued = true;
+          queueMicrotask(() => {
+            this.coverRecomputeQueued = false;
+            if (msg.runId === this.runId) this.renderer.setCoverage(this.computeCoverage());
+          });
+        }
+        break;
       case "console": {
         const text = msg.args.map((a) => a.preview).join(" ");
         this.output.appendLine(text);
@@ -102,9 +123,30 @@ export class QuollSession implements vscode.Disposable {
         if (msg.reason !== "complete") this.output.appendLine(`[quoll] exit: ${msg.reason}`);
         break;
       default:
-        // value/perf/cover (phase 4+), expandResult (phase 5).
+        // perf (phase 8), expandResult (phase 5).
         break;
     }
+  }
+
+  /**
+   * Line state from coverage sites: any unhit site on a line with hit sites
+   * (e.g. an untaken ternary arm) renders PARTIAL; all-hit → covered;
+   * none-hit → uncovered. Lines without sites get no gutter mark.
+   */
+  private computeCoverage(): Map<number, CoverageState> {
+    const lineState = new Map<number, { hit: boolean; missed: boolean }>();
+    for (const site of this.prepared?.sites.values() ?? []) {
+      if (site.kind !== "statement" && site.kind !== "branch") continue;
+      const state = lineState.get(site.line) ?? { hit: false, missed: false };
+      if ((this.coverHits.get(site.id) ?? 0) > 0) state.hit = true;
+      else state.missed = true;
+      lineState.set(site.line, state);
+    }
+    const coverage = new Map<number, CoverageState>();
+    for (const [line, state] of lineState) {
+      coverage.set(line, state.hit && state.missed ? "partial" : state.hit ? "covered" : "uncovered");
+    }
+    return coverage;
   }
 
   dispose(): void {

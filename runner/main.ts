@@ -118,6 +118,41 @@ function trapAsyncErrors(): void {
   });
 }
 
+// Don't flood the IPC channel from hot loops; the renderer caps per-line
+// display anyway. Coverage hits keep counting past the cap.
+const VALUE_CAP_PER_SITE = 500;
+
+const coverHits = new Map<number, number>();
+const flushedThrough = new Map<number, number>();
+
+/** The runtime global the instrumented code calls into (see instrument.rs). */
+function installQuollRuntime(): void {
+  const valuesSent = new Map<number, number>();
+  (globalThis as Record<string, unknown>).__quoll = {
+    log(siteId: number, value: unknown): unknown {
+      const n = (valuesSent.get(siteId) ?? 0) + 1;
+      valuesSent.set(siteId, n);
+      if (n <= VALUE_CAP_PER_SITE) {
+        send({ t: "value", siteId, value: toRemoteValue(value) });
+      }
+      return value;
+    },
+    cover(siteId: number): void {
+      coverHits.set(siteId, (coverHits.get(siteId) ?? 0) + 1);
+    },
+  };
+}
+
+/** Send cover totals that changed since the last flush (host keeps latest). */
+function flushCover(): void {
+  for (const [siteId, hits] of coverHits) {
+    if (flushedThrough.get(siteId) !== hits) {
+      send({ t: "cover", siteId, hits });
+      flushedThrough.set(siteId, hits);
+    }
+  }
+}
+
 function patchConsole(): void {
   const levels: ConsoleLevel[] = ["log", "info", "warn", "error", "debug"];
   for (const level of levels) {
@@ -146,6 +181,7 @@ function toDataUrl(code: string): string {
 async function handleRun(msg: Extract<HostMsg, { t: "run" }>): Promise<never> {
   runId = msg.runId;
   seq = 0;
+  installQuollRuntime();
   patchConsole();
   patchTimers();
   trapAsyncErrors();
@@ -164,6 +200,7 @@ async function handleRun(msg: Extract<HostMsg, { t: "run" }>): Promise<never> {
       siteId: userCallLine(stack),
     });
   }
+  flushCover();
   send({ t: "done", durationMs: Math.round(performance.now() - start) });
 
   // QUIET window (per spec): the run stays alive while events keep arriving
@@ -174,11 +211,13 @@ async function handleRun(msg: Extract<HostMsg, { t: "run" }>): Promise<never> {
   while (performance.now() - graceStart < ASYNC_MAX_MS) {
     await sleep(ASYNC_GRACE_MS);
     if (seq === lastSeq && pendingTimers === 0) {
+      flushCover(); // late timer/promise work may have added hits
       send({ t: "exit", reason: "complete" });
       Deno.exit(0);
     }
     lastSeq = seq;
   }
+  flushCover();
   send({ t: "exit", reason: "timeout" });
   Deno.exit(0);
 }

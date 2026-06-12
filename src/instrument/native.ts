@@ -8,6 +8,14 @@ export type NativeBinding = {
   ): {
     code: string;
     mapJson: string;
+    sites: {
+      id: number;
+      line: number;
+      column: number;
+      endLine: number;
+      endColumn: number;
+      kind: string;
+    }[];
     errors: { message: string; line?: number }[];
   };
 };

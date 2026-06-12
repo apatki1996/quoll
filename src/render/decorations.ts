@@ -11,7 +11,14 @@ function truncate(text: string): string {
   return cut + "…";
 }
 
-/** Inline end-of-line decorations for one document: values and errors. */
+export type CoverageState = "covered" | "uncovered" | "partial";
+
+function gutterIcon(color: string): vscode.Uri {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect x="10" y="6" width="7" height="20" rx="2" fill="${color}"/></svg>`;
+  return vscode.Uri.parse(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
+}
+
+/** Inline end-of-line decorations + coverage gutter for one document. */
 export class Renderer implements vscode.Disposable {
   private readonly valueType = vscode.window.createTextEditorDecorationType({
     after: {
@@ -26,10 +33,25 @@ export class Renderer implements vscode.Disposable {
       margin: "0 0 0 2em",
     },
   });
+  private readonly coverageTypes: Record<CoverageState, vscode.TextEditorDecorationType> = {
+    covered: vscode.window.createTextEditorDecorationType({
+      gutterIconPath: gutterIcon("#2ea043"),
+      gutterIconSize: "contain",
+    }),
+    uncovered: vscode.window.createTextEditorDecorationType({
+      gutterIconPath: gutterIcon("#f85149"),
+      gutterIconSize: "contain",
+    }),
+    partial: vscode.window.createTextEditorDecorationType({
+      gutterIconPath: gutterIcon("#d29922"),
+      gutterIconSize: "contain",
+    }),
+  };
 
   /** 1-based line -> previews observed this run (loops produce several). */
   private values = new Map<number, string[]>();
   private errors = new Map<number, string>();
+  private coverage = new Map<number, CoverageState>();
 
   constructor(private readonly doc: vscode.TextDocument) {}
 
@@ -45,9 +67,15 @@ export class Renderer implements vscode.Disposable {
     this.apply();
   }
 
+  setCoverage(coverage: Map<number, CoverageState>): void {
+    this.coverage = coverage;
+    this.apply();
+  }
+
   clear(): void {
     this.values.clear();
     this.errors.clear();
+    this.coverage.clear();
     this.apply();
   }
 
@@ -80,9 +108,23 @@ export class Renderer implements vscode.Disposable {
       });
     }
 
+    const coverageDecos: Record<CoverageState, vscode.Range[]> = {
+      covered: [],
+      uncovered: [],
+      partial: [],
+    };
+    for (const [line, state] of this.coverage) {
+      if (line < 1 || line > this.doc.lineCount) continue;
+      const start = this.doc.lineAt(line - 1).range.start;
+      coverageDecos[state].push(new vscode.Range(start, start));
+    }
+
     for (const editor of editors) {
       editor.setDecorations(this.valueType, valueDecos);
       editor.setDecorations(this.errorType, errorDecos);
+      for (const state of ["covered", "uncovered", "partial"] as const) {
+        editor.setDecorations(this.coverageTypes[state], coverageDecos[state]);
+      }
     }
   }
 
@@ -95,5 +137,6 @@ export class Renderer implements vscode.Disposable {
   dispose(): void {
     this.valueType.dispose();
     this.errorType.dispose();
+    for (const type of Object.values(this.coverageTypes)) type.dispose();
   }
 }

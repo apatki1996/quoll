@@ -5,20 +5,37 @@
 //! value-capture/coverage injection into this same pass, which is the whole
 //! reason this pipeline is single-pass (no source-map composition).
 
+mod instrument;
+
 use std::path::Path;
 
 use napi_derive::napi;
 use oxc_allocator::Allocator;
+use oxc_ast_visit::VisitMut;
 use oxc_codegen::{Codegen, CodegenOptions};
 use oxc_parser::Parser;
 use oxc_semantic::SemanticBuilder;
 use oxc_span::SourceType;
 use oxc_transformer::{TransformOptions, Transformer};
 
+use instrument::Instrumenter;
+
 #[napi(object)]
 pub struct InstrumentOpts {
     pub filename: String,
     pub jsx: bool,
+}
+
+#[napi(object)]
+pub struct NapiCaptureSite {
+    pub id: u32,
+    /// 1-based lines, 0-based byte columns, original-source coordinates.
+    pub line: u32,
+    pub column: u32,
+    pub end_line: u32,
+    pub end_column: u32,
+    /// "expr" | "statement" | "branch" (see protocol CaptureSiteKind).
+    pub kind: String,
 }
 
 #[napi(object)]
@@ -33,6 +50,8 @@ pub struct InstrumentResult {
     pub code: String,
     /// Source map v3 as JSON (host parses into RawSourceMap).
     pub map_json: String,
+    /// Capture sites injected into `code`, original-source positions.
+    pub sites: Vec<NapiCaptureSite>,
     /// Fatal parse/transform errors. Non-empty means `code` is unusable.
     pub errors: Vec<InstrumentError>,
 }
@@ -55,6 +74,7 @@ pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
         return InstrumentResult {
             code: String::new(),
             map_json: String::new(),
+            sites: vec![],
             errors: parser_ret
                 .errors
                 .iter()
@@ -78,6 +98,7 @@ pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
         return InstrumentResult {
             code: String::new(),
             map_json: String::new(),
+            sites: vec![],
             errors: transformer_ret
                 .errors
                 .iter()
@@ -85,6 +106,11 @@ pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
                 .collect(),
         };
     }
+
+    // Phase 4: inject value-capture + coverage into the SAME AST before the
+    // single codegen — no second pass, no source-map composition.
+    let mut instrumenter = Instrumenter::new(&allocator, &source);
+    instrumenter.visit_program(&mut program);
 
     let codegen_ret = Codegen::new()
         .with_options(CodegenOptions {
@@ -96,6 +122,18 @@ pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
     InstrumentResult {
         code: codegen_ret.code,
         map_json: codegen_ret.map.map(|m| m.to_json_string()).unwrap_or_default(),
+        sites: instrumenter
+            .sites
+            .iter()
+            .map(|s| NapiCaptureSite {
+                id: s.id,
+                line: s.line,
+                column: s.column,
+                end_line: s.end_line,
+                end_column: s.end_column,
+                kind: s.kind.to_string(),
+            })
+            .collect(),
         errors: vec![],
     }
 }

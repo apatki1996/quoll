@@ -49,7 +49,8 @@
     "typecheck": "tsc --noEmit",
     "vscode:prepublish": "pnpm run build:core && pnpm run build",
     "build:core": "node scripts/build-core.mjs",
-    "check:phase3": "node scripts/phase3-check.mjs"
+    "check:phase3": "node scripts/phase3-check.mjs",
+    "eval": "node eval/run.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
