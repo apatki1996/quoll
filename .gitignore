@@ -1,8 +1,10 @@
 conversation*
+.DS_Store
 node_modules/
 dist/
 *.vsix
 crates/quoll-core/target/
 native/
+screenshots/
 
 LOG.md

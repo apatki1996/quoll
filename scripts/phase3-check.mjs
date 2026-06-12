@@ -43,7 +43,12 @@ const child = spawn(deno, ["run", "--quiet", "--no-prompt", join(root, "runner",
 child.stdin.write(JSON.stringify({ t: "run", runId: 1, code, entry: "sample.ts" }) + "\n");
 
 let out = "";
-child.stdout.on("data", (c) => (out += c));
+child.stdout.on("data", (c) => {
+  out += c;
+  // The runner lingers after `exit` to serve expand (phase 5); kill it once
+  // the event log is complete (trailing newline = no mid-line cut).
+  if (out.includes('"t":"exit"') && out.endsWith("\n")) child.kill();
+});
 await new Promise((resolve) => child.on("close", resolve));
 
 const msgs = out.trim().split("\n").map((l) => JSON.parse(l));

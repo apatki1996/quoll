@@ -13,3 +13,9 @@ pnpm-workspace.yaml
 quoll-spec.md
 conversation*
 .gitignore
+eval/**
+runner/*_test.ts
+LOG.md
+DECISIONS.md
+image.png
+screenshots/**

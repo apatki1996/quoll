@@ -53,7 +53,12 @@ async function runCase(file) {
   const child = spawn(deno, ["run", "--quiet", "--no-prompt", join(root, "runner", "main.ts")]);
   child.stdin.write(JSON.stringify({ t: "run", runId: 1, code, entry: file }) + "\n");
   let out = "";
-  child.stdout.on("data", (c) => (out += c));
+  child.stdout.on("data", (c) => {
+    out += c;
+    // The runner lingers after `exit` to serve expand (phase 5); the harness
+    // must kill it. Wait for the trailing newline so no line is cut mid-parse.
+    if (out.includes('"t":"exit"') && out.endsWith("\n")) child.kill();
+  });
   await new Promise((resolve) => child.on("close", resolve));
 
   // Reproduce the session's attribution rules.

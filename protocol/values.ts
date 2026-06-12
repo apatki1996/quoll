@@ -29,10 +29,12 @@ export type RemoteValue = {
   /**
    * Present if lazily expandable via the `expand` host message.
    *
-   * Lifetime: scoped to its runId; valid until that run's `exit`. The runner
-   * retains referenced objects under a memory budget with LRU eviction;
-   * expand() on an evicted id returns an "evicted" error while the recorded
-   * preview remains displayable (Time Machine degrades gracefully).
+   * Lifetime: scoped to its runId; valid while that run's runner process is
+   * alive. `exit` ends the event log, not the registry — the runner lingers
+   * to serve `expand` until the host kills it (next run / session stop). The
+   * runner retains referenced objects under a memory budget with LRU
+   * eviction; expand() on an evicted id returns an "evicted" error while the
+   * recorded preview remains displayable (Time Machine degrades gracefully).
    */
   objectId?: string;
 };

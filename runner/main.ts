@@ -1,12 +1,13 @@
 /**
  * Quoll runner — executes user code in a permission-locked Deno subprocess.
  *
- * Lifecycle (one process per run; the host kills the process to cancel):
- *   stdin:  one HostMsg `run` as NDJSON
+ * Lifecycle (one run per process; the host kills the process to cancel):
+ *   stdin:  one HostMsg `run`, then any number of `expand`, as NDJSON
  *   stdout: RunnerMsg NDJSON stream … `done` → async grace window → `exit`
  *
- * Phase 1 scope: console.* capture only. Value capture (instrumented code),
- * expand, and profiling arrive in later phases.
+ * `exit` ends the EVENT LOG, not the process: the runner lingers afterwards
+ * serving `expand` from the object registry (value explorer) until the host
+ * kills it on the next run / session stop.
  */
 
 // NB: protocol/* imports here MUST stay `import type`. The packaged extension
@@ -14,7 +15,7 @@
 // Deno before resolution, but a value import would fail at runtime in the
 // packaged extension only.
 import type { ConsoleLevel, HostMsg, RunnerEvent, RunnerMsg } from "../protocol/index.ts";
-import { toRemoteValue } from "./serialize.ts";
+import { expandObject, toRemoteValue } from "./serialize.ts";
 
 // TODO(config): expose as `asyncGraceMs` per the spec's run-completion semantics.
 const ASYNC_GRACE_MS = 200;
@@ -24,10 +25,15 @@ const ASYNC_MAX_MS = 5000;
 
 let runId = -1;
 let seq = 0;
+// Set just before `exit` goes out. The event log is sealed from then on:
+// only expandResult may follow (a stray setInterval in the lingering process
+// must not keep streaming values at the host).
+let exited = false;
 
 const encoder = new TextEncoder();
 
 function send(event: RunnerEvent): void {
+  if (exited && event.t !== "expandResult") return;
   const msg: RunnerMsg = { runId, seq: seq++, ts: Date.now(), ...event };
   const bytes = encoder.encode(JSON.stringify(msg) + "\n");
   try {
@@ -187,7 +193,7 @@ function toDataUrl(code: string): string {
   return `data:application/typescript;base64,${btoa(binary)}`;
 }
 
-async function handleRun(msg: Extract<HostMsg, { t: "run" }>): Promise<never> {
+async function handleRun(msg: Extract<HostMsg, { t: "run" }>): Promise<void> {
   runId = msg.runId;
   seq = 0;
   installQuollRuntime();
@@ -217,18 +223,19 @@ async function handleRun(msg: Extract<HostMsg, { t: "run" }>): Promise<never> {
   // survive; ASYNC_MAX_MS caps it (setInterval exits here as "timeout").
   const graceStart = performance.now();
   let lastSeq = seq;
+  let reason: "complete" | "timeout" = "timeout";
   while (performance.now() - graceStart < ASYNC_MAX_MS) {
     await sleep(ASYNC_GRACE_MS);
     if (seq === lastSeq && pendingTimers === 0) {
-      flushCover(); // late timer/promise work may have added hits
-      send({ t: "exit", reason: "complete" });
-      Deno.exit(0);
+      reason = "complete";
+      break;
     }
     lastSeq = seq;
   }
-  flushCover();
-  send({ t: "exit", reason: "timeout" });
-  Deno.exit(0);
+  flushCover(); // late timer/promise work may have added hits
+  send({ t: "exit", reason });
+  exited = true;
+  // No Deno.exit: linger to serve `expand` until the host kills us.
 }
 
 async function* lines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
@@ -245,17 +252,40 @@ async function* lines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string
   }
 }
 
+let ran = false;
 for await (const line of lines(Deno.stdin.readable)) {
   const msg = JSON.parse(line) as HostMsg;
   switch (msg.t) {
     case "run":
-      await handleRun(msg);
+      // NOT awaited: the loop must keep reading so `expand` is served both
+      // during the run and after `exit` (keep-alive). One run per process.
+      if (!ran) {
+        ran = true;
+        handleRun(msg).catch((err: unknown) => {
+          send({ t: "error", message: err instanceof Error ? err.message : String(err) });
+          send({ t: "exit", reason: "crash" });
+          exited = true;
+        });
+      }
       break;
+    case "expand": {
+      const outcome = msg.runId === runId
+        ? expandObject(msg.objectId)
+        : ({ error: "unknown" } as const);
+      send(
+        "error" in outcome
+          ? { t: "expandResult", reqId: msg.reqId, entries: [], error: outcome.error }
+          : { t: "expandResult", reqId: msg.reqId, entries: outcome.entries },
+      );
+      break;
+    }
     case "cancel":
       // Cancellation is process kill from the host side; nothing to do here.
       break;
     default:
-      // expand (phase 5), profileStart/profileStop (phase 12).
+      // profileStart/profileStop (phase 12).
       break;
   }
 }
+// stdin closed: the host is gone, so no one can ever ask for an expansion.
+Deno.exit(0);

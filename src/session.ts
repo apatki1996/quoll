@@ -1,8 +1,17 @@
 import * as vscode from "vscode";
-import type { RunnerMsg } from "../protocol/index.ts";
+import type { RemoteValue, RunnerMsg } from "../protocol/index.ts";
 import { prepareRun, type PreparedRun } from "./instrument/index.ts";
 import { Renderer, type CoverageState } from "./render/decorations.ts";
 import { startRun, type RunHandle } from "./runner/client.ts";
+
+/** Host-side outcome of a lazy expansion ("gone": runner process is dead). */
+export type ExpandOutcome =
+  | { entries: { key: string; value: RemoteValue }[] }
+  | { error: "evicted" | "unknown" | "gone" };
+
+/** Per-site capture history kept for the value explorer (latest always kept). */
+const MAX_SITE_VALUES = 100;
+const EXPAND_TIMEOUT_MS = 3000;
 
 /**
  * A live session on one document: re-runs (debounced) on every edit and
@@ -14,6 +23,13 @@ export class QuollSession implements vscode.Disposable {
   private prepared: PreparedRun | undefined;
   private coverHits = new Map<number, number>();
   private coverRecomputeQueued = false;
+  private siteValues = new Map<number, RemoteValue[]>();
+  private nextReqId = 1;
+  private readonly pendingExpands = new Map<number, (outcome: ExpandOutcome) => void>();
+  private updateQueued = false;
+  private readonly updateEmitter = new vscode.EventEmitter<void>();
+  /** Fires (microtask-coalesced) when explorer-visible data changes. */
+  readonly onDidUpdate = this.updateEmitter.event;
   private readonly renderer: Renderer;
   private debounce: ReturnType<typeof setTimeout> | undefined;
   private readonly disposables: vscode.Disposable[] = [];
@@ -53,6 +69,9 @@ export class QuollSession implements vscode.Disposable {
       this.extensionRoot,
     );
     this.coverHits = new Map();
+    this.siteValues = new Map();
+    this.failPendingExpands();
+    this.queueUpdate();
     this.renderer.clear();
 
     if (this.prepared.errors.length > 0) {
@@ -86,7 +105,14 @@ export class QuollSession implements vscode.Disposable {
     switch (msg.t) {
       case "value": {
         const site = this.prepared?.sites.get(msg.siteId);
-        if (site) this.renderer.addValue(site.line, msg.value.preview);
+        if (site) {
+          this.renderer.addValue(site.line, msg.value.preview);
+          let history = this.siteValues.get(msg.siteId);
+          if (!history) this.siteValues.set(msg.siteId, (history = []));
+          if (history.length >= MAX_SITE_VALUES) history.shift(); // latest always kept
+          history.push(msg.value);
+          this.queueUpdate();
+        }
         break;
       }
       case "cover":
@@ -122,10 +148,66 @@ export class QuollSession implements vscode.Disposable {
       case "exit":
         if (msg.reason !== "complete") this.output.appendLine(`[quoll] exit: ${msg.reason}`);
         break;
+      case "expandResult": {
+        const resolve = this.pendingExpands.get(msg.reqId);
+        if (resolve) {
+          this.pendingExpands.delete(msg.reqId);
+          resolve(msg.error ? { error: msg.error } : { entries: msg.entries });
+        }
+        break;
+      }
       default:
-        // perf (phase 8), expandResult (phase 5).
+        // perf (phase 8).
         break;
     }
+  }
+
+  /**
+   * Lazy expansion against the runner — which lingers after `exit` precisely
+   * for this (see protocol). "gone" when the process died or never answers.
+   */
+  expand(objectId: string): Promise<ExpandOutcome> {
+    const run = this.run;
+    if (!run) return Promise.resolve({ error: "gone" });
+    const reqId = this.nextReqId++;
+    return new Promise((resolve) => {
+      if (!run.send({ t: "expand", runId: this.runId, reqId, objectId })) {
+        resolve({ error: "gone" });
+        return;
+      }
+      const timer = setTimeout(() => {
+        this.pendingExpands.delete(reqId);
+        resolve({ error: "gone" });
+      }, EXPAND_TIMEOUT_MS);
+      this.pendingExpands.set(reqId, (outcome) => {
+        clearTimeout(timer);
+        resolve(outcome);
+      });
+    });
+  }
+
+  /** Explorer roots: the current run's captured values, by source line. */
+  valueRoots(): { line: number; values: RemoteValue[] }[] {
+    const roots: { line: number; values: RemoteValue[] }[] = [];
+    for (const [siteId, values] of this.siteValues) {
+      const site = this.prepared?.sites.get(siteId);
+      if (site && values.length > 0) roots.push({ line: site.line, values });
+    }
+    return roots.sort((a, b) => a.line - b.line);
+  }
+
+  private failPendingExpands(): void {
+    for (const resolve of this.pendingExpands.values()) resolve({ error: "gone" });
+    this.pendingExpands.clear();
+  }
+
+  private queueUpdate(): void {
+    if (this.updateQueued) return;
+    this.updateQueued = true;
+    queueMicrotask(() => {
+      this.updateQueued = false;
+      this.updateEmitter.fire();
+    });
   }
 
   /**
@@ -151,8 +233,10 @@ export class QuollSession implements vscode.Disposable {
 
   dispose(): void {
     if (this.debounce !== undefined) clearTimeout(this.debounce);
+    this.failPendingExpands();
     this.run?.cancel();
     this.renderer.dispose();
+    this.updateEmitter.dispose();
     for (const d of this.disposables) d.dispose();
   }
 }

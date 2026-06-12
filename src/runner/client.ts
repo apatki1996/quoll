@@ -9,6 +9,12 @@ import type { HostMsg, RunnerMsg } from "../../protocol/index.ts";
 
 export type RunHandle = {
   cancel(): void;
+  /**
+   * Write a follow-up HostMsg (`expand`) to the live runner. Returns false
+   * when the process is already gone — the caller treats that as
+   * "value no longer available".
+   */
+  send(msg: HostMsg): boolean;
   /** Resolves when the subprocess exits (any reason). */
   exited: Promise<void>;
 };
@@ -73,6 +79,11 @@ export function startRun(opts: StartRunOpts): RunHandle {
   return {
     cancel() {
       child.kill();
+    },
+    send(msg: HostMsg): boolean {
+      if (child.killed || child.stdin.destroyed || !child.stdin.writable) return false;
+      child.stdin.write(JSON.stringify(msg) + "\n");
+      return true;
     },
     exited,
   };

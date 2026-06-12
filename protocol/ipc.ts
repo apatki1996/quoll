@@ -56,8 +56,20 @@ export type RunnerEvent =
    * `done` and patches as late values arrive.
    */
   | { t: "done"; durationMs: number }
-  | { t: "expandResult"; reqId: number; entries: { key: string; value: RemoteValue }[] }
-  /** Terminal. After `exit`, all objectIds for this runId are invalid. */
+  /** `entries` is empty when `error` is set ("evicted": LRU-dropped under the
+   * memory budget; "unknown": id never existed / wrong runId). */
+  | {
+      t: "expandResult";
+      reqId: number;
+      entries: { key: string; value: RemoteValue }[];
+      error?: "evicted" | "unknown";
+    }
+  /**
+   * Terminal for the EVENT LOG (nothing after it is part of the recorded
+   * run). The runner process itself stays alive afterwards to serve `expand`
+   * for the value explorer; objectIds for this runId stay valid until the
+   * host kills the process (next run or session stop).
+   */
   | { t: "exit"; reason: ExitReason };
 
 export type RunnerMsg = RunnerMsgMeta & RunnerEvent;

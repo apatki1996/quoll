@@ -191,9 +191,12 @@ type RunnerMsg = { runId: number; seq: number; ts: number } & (
   | { t: "done";   durationMs: number }  // sync run + microtask flush complete;
       // late async `value`/`console` messages MAY still follow until `exit`
   | { t: "expandResult"; reqId: number;
-      entries: { key: string; value: RemoteValue }[] }
+      entries: { key: string; value: RemoteValue }[];
+      error?: "evicted" | "unknown" }  // entries is empty when error is set
   | { t: "exit";   reason: "complete" | "cancelled" | "timeout" | "crash" }
-      // terminal. After `exit`, all objectIds for this runId are invalid.
+      // terminal for the EVENT LOG. The runner process stays alive after
+      // `exit` to serve `expand` (value explorer); the host kills it on the
+      // next run or session stop.
 );
 
 // Run-completion semantics: `done` fires after the synchronous pass and
@@ -212,10 +215,13 @@ type RemoteValue = {
   preview: string;       // truncated, display-ready
   objectId?: string;     // present if lazily expandable
 };
-// objectId lifetime: scoped to its runId; valid until that run's `exit`.
-// The runner retains referenced objects under a memory budget with LRU
-// eviction; expand() on an evicted id returns an "evicted" error while the
-// recorded preview remains displayable (Time Machine degrades gracefully).
+// objectId lifetime: scoped to its runId; valid while that run's runner
+// process is alive (`exit` ends the event log, not the registry — the runner
+// lingers to serve `expand` until the host kills it on the next run or
+// session stop). The runner retains referenced objects under a memory budget
+// with LRU eviction; expand() on an evicted id returns an "evicted" error
+// while the recorded preview remains displayable (Time Machine degrades
+// gracefully).
 ```
 
 ## Phased roadmap (each phase is a checkpoint)

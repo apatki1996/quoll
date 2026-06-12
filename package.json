@@ -25,8 +25,43 @@
       {
         "command": "quoll.stop",
         "title": "Quoll: Stop Session"
+      },
+      {
+        "command": "quoll.copyValue",
+        "title": "Copy Value",
+        "icon": "$(copy)"
       }
     ],
+    "views": {
+      "explorer": [
+        {
+          "id": "quollValues",
+          "name": "Quoll Values",
+          "icon": "$(symbol-value)"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "quollValues",
+        "contents": "No Quoll session is running.\n[Start Quoll](command:quoll.start)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "quoll.copyValue",
+          "when": "false"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "quoll.copyValue",
+          "when": "view == quollValues && viewItem == quollValue",
+          "group": "inline"
+        }
+      ]
+    },
     "configuration": {
       "title": "Quoll",
       "properties": {
@@ -50,6 +85,7 @@
     "vscode:prepublish": "pnpm run build:core && pnpm run build",
     "build:core": "node scripts/build-core.mjs",
     "check:phase3": "node scripts/phase3-check.mjs",
+    "check:phase5": "node scripts/phase5-check.mjs",
     "eval": "node eval/run.mjs"
   },
   "devDependencies": {
