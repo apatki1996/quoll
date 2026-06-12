@@ -17,6 +17,32 @@ future regression fails a test, not just memory.
 
 ---
 
+## 2026-06-12 — Eval harness must test real code, not a replica [RESOLVED]
+
+- **Context:** the harness gave a false green — `async_settle` passed (`//=> 42`)
+  while the editor actually rendered the noisy `Promise { <pending> }, then 42`.
+  Two root causes: (1) assertions were substring-CONTAINMENT (`got.includes`), so
+  surplus/noise was invisible; (2) `eval/run.mjs` *reimplemented* the host's
+  attribution + aggregation + coverage rollup, so it tested a replica that could
+  drift from the real `session.ts`/`decorations.ts`.
+- **Decision (Fix A + Fix B):**
+  - **A — exact match.** Added a `//== <text>` operator asserting the line's value
+    decoration EQUALS exactly (kept `//=>` contains for the cases that need it).
+    Pinned `async_settle` to `then 42`; it immediately caught that the `braceless`
+    loop truly renders `0, 0, 1` (the old `//=> 1` hid it).
+  - **B — kill the replica.** Extracted attribution/aggregation/coverage into one
+    vscode-free `src/render/aggregate.ts` (`Aggregator`) consumed by BOTH the live
+    host and the harness. Renderer slimmed to decoration plumbing; harness now
+    exercises the exact editor logic. Hardened the annotation parser to ignore
+    `//==`/`//=>` in prose comments.
+- **Rejected:** keeping containment-only (can't catch noise); host-only inference
+  for promise-replace (brittle at a line-keyed renderer); leaving the replica
+  (the thing that masked the bug).
+- **Constraint discovered:** the shared module must be pure-erasure TS — NO
+  constructor parameter properties — because the node harness type-strips it.
+- **Revisit if:** a future feature needs render state the `Aggregator` doesn't
+  model; extend the one module (both consumers update together by construction).
+
 ## 2026-06-12 — Reference comparison: Quokka vs Quoll (open gaps, not yet decided)
 
 First live comparison of Quoll's output against Quokka on the same source
