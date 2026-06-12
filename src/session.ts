@@ -22,6 +22,8 @@ export class QuollSession implements vscode.Disposable {
   private run: RunHandle | undefined;
   private prepared: PreparedRun | undefined;
   private agg: Aggregator | undefined;
+  /** Absolute paths of imported project files; editing any re-runs the entry. */
+  private deps = new Set<string>();
   private renderQueued = false;
   private nextReqId = 1;
   private readonly pendingExpands = new Map<number, (outcome: ExpandOutcome) => void>();
@@ -42,6 +44,13 @@ export class QuollSession implements vscode.Disposable {
     this.disposables.push(
       vscode.workspace.onDidChangeTextDocument((e) => {
         if (e.document === this.doc && e.contentChanges.length > 0) this.scheduleRun();
+      }),
+      // Imported deps are loaded from DISK by the runner, so they re-run on
+      // SAVE (disk is fresh then). Re-running on the unsaved buffer change
+      // would read stale disk content and lag one value behind. (The active
+      // file is read from the editor buffer via getText(), so it's live on type.)
+      vscode.workspace.onDidSaveTextDocument((doc) => {
+        if (this.deps.has(doc.fileName)) this.scheduleRun();
       }),
       vscode.window.onDidChangeVisibleTextEditors(() => this.renderer.reapply()),
     );
@@ -70,6 +79,7 @@ export class QuollSession implements vscode.Disposable {
     this.agg = new Aggregator(this.prepared.sites, (id) =>
       id === undefined ? undefined : this.prepared?.toSourceLine(id),
     );
+    this.deps = new Set(this.prepared.deps); // refresh the watch graph each run
     this.failPendingExpands();
     this.queueUpdate();
     this.renderer.clear();

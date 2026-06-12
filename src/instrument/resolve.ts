@@ -17,7 +17,7 @@
  * literals, not a full parse — good enough for v1; move to Oxc-span extraction
  * if a string literal in non-import position ever false-matches in practice.
  */
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -70,4 +70,35 @@ export function rewriteImports(code: string, entryPath: string): RewriteResult {
     return `${prefix}${quote}${pathToFileURL(abs).href}${quote}`;
   });
   return { code: rewritten, deps: [...deps] };
+}
+
+/** Relative specifiers in `code` (the set rewriteImports/collectDeps target). */
+function relativeSpecifiers(code: string): string[] {
+  return [...code.matchAll(SPECIFIER)].map((m) => m[3]!); // group 3 present on any match
+}
+
+/**
+ * The TRANSITIVE set of project files the entry statically imports (absolute
+ * paths) — the watch graph for auto-rerun. Reads each dep from disk and follows
+ * its relative imports; cycles are handled via the visited set. Dynamic imports
+ * with computed specifiers and bare specifiers (node_modules) are not followed
+ * (v1). The entry's own path is NOT included (the editor already re-runs on it).
+ */
+export function collectDeps(entryCode: string, entryPath: string): string[] {
+  const seen = new Set<string>();
+  const visit = (code: string, fromPath: string): void => {
+    const fromDir = dirname(fromPath);
+    for (const spec of relativeSpecifiers(code)) {
+      const abs = resolveSpecifier(spec, fromDir);
+      if (!abs || seen.has(abs)) continue;
+      seen.add(abs);
+      try {
+        visit(readFileSync(abs, "utf8"), abs);
+      } catch {
+        // unreadable dep — still worth watching, but can't follow its imports.
+      }
+    }
+  };
+  visit(entryCode, entryPath);
+  return [...seen];
 }

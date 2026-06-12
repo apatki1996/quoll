@@ -3,7 +3,7 @@ import { strict as assert } from "node:assert";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { resolveSpecifier, rewriteImports } from "./resolve.ts";
+import { collectDeps, resolveSpecifier, rewriteImports } from "./resolve.ts";
 
 const tmp = Deno.makeTempDirSync({ prefix: "quoll-resolve-" });
 writeFileSync(join(tmp, "util.ts"), "export const x = 1;\n");
@@ -26,6 +26,17 @@ Deno.test("resolveSpecifier: directory index", () => {
 
 Deno.test("resolveSpecifier: undefined for missing", () => {
   assert.equal(resolveSpecifier("./nope", tmp), undefined);
+});
+
+Deno.test("collectDeps: transitive graph, cycle-safe, entry excluded", () => {
+  writeFileSync(join(tmp, "a.ts"), `import "./b.ts";\n`);
+  writeFileSync(join(tmp, "b.ts"), `import "./a.ts";\nexport const b = 1;\n`); // a<->b cycle
+  const entryCode = `import "./util.ts";\nimport "./lib";\nimport "./a.ts";\n`;
+  const deps = collectDeps(entryCode, join(tmp, "main.ts")).sort();
+  assert.deepEqual(
+    deps,
+    [join(tmp, "a.ts"), join(tmp, "b.ts"), join(tmp, "lib", "index.ts"), join(tmp, "util.ts")].sort(),
+  );
 });
 
 Deno.test("rewriteImports: relative -> file://, collects deps, leaves bare alone", () => {

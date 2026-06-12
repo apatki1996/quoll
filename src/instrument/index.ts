@@ -2,7 +2,7 @@ import type { CaptureSite, InstrumentOpts, RawSourceMap } from "../../protocol/i
 import { identityInstrument } from "./identity.ts";
 import { loadNative } from "./native.ts";
 import { buildLineMap } from "./sourcemap.ts";
-import { rewriteImports } from "./resolve.ts";
+import { collectDeps, rewriteImports } from "./resolve.ts";
 
 export type PreparedRun = {
   /** Code to send to the runner (instrumented JS, or source verbatim on fallback). */
@@ -35,7 +35,8 @@ export function prepareRun(
   const native = loadNative(extensionRoot);
   if (!native) {
     const { code } = identityInstrument(source, opts);
-    const { code: runnable, deps } = rewriteImports(code, opts.filename);
+    const { code: runnable } = rewriteImports(code, opts.filename);
+    const deps = collectDeps(code, opts.filename);
     return { code: runnable, deps, sites: new Map(), toSourceLine: (line) => line, errors: [] };
   }
 
@@ -51,7 +52,8 @@ export function prepareRun(
     const lineMap = buildLineMap(map);
     // Resolve relative project imports to absolute file:// so the runner's
     // data: URL entry can load sibling files (Phase 6).
-    const { code: runnable, deps } = rewriteImports(result.code, opts.filename);
+    const { code: runnable } = rewriteImports(result.code, opts.filename);
+    const deps = collectDeps(result.code, opts.filename);
     return {
       code: runnable,
       deps,
