@@ -17,6 +17,36 @@ future regression fails a test, not just memory.
 
 ---
 
+## 2026-06-12 — Quoll shows ALL expression values: DEFAULT, not enshrined [CONFIGURABLE]
+
+- **Context:** Quokka only renders an inline value when you opt in — a
+  `console.log` or a `//?` live comment. With bare expression statements and no
+  logging it shows nothing (`screenshots/quokka-afns-2-without-consolelog.png`:
+  `f(3)`/`g(4)`/`h(3)` are silent). Quoll auto-instruments every expression and
+  shows its value everywhere (`screenshots/quoll-afns-2.png`).
+- **Decision (user, 2026-06-12): always-on is the DEFAULT, but it's a reversible
+  RENDER POLICY — not "the one true way."** Always-on wins for scratch files /
+  exploration / zero-friction (Quoll's differentiator). Opt-in (Quokka's model)
+  wins for large real files — more signal, less noise, less capture overhead —
+  and gives the developer control. Both are valid; which is "better DX" is
+  context-dependent (an earlier "always-on is obviously better" was an
+  overstatement). The capture-site `kind` already separates auto (`expr`) from
+  opt-in (`comment`/`//?`), so a "quiet / `//?`-only" mode is a render-time
+  FILTER, not a re-architecture — build it as a setting alongside `//?` (phase 8).
+- **Will it bite us? Only if enshrined.** Risks of a *fixed* always-on default:
+  (1) noise on large files, (2) capture/serialize overhead on every expression,
+  (3) default lock-in (changing it later is a UX break). All mitigated by keeping
+  it configurable from the start — so ship always-on as the default, but treat
+  the opt-in toggle as a near-term companion, not a someday-maybe.
+- **Considered & dropped — `λ` function previews:** briefly rendered functions
+  as `λ` / `λ <name>` (Quokka idiom), then reverted. For a value inspector,
+  truthful > cute: keep Deno's literal `[Function (anonymous)]` / `[Function:
+  name]`, which reflects the real runtime shape. (Note: `λ` is plain Unicode
+  U+03BB — NO Nerd-Font/ligature setup needed — so it's a viable *opt-in*
+  cosmetic later, just not the default.)
+- **Revisit if:** always-on gets noisy on large files — a future opt-DOWN "quiet /
+  `//?`-only" mode is cheap (capture sites already carry a `kind`).
+
 ## 2026-06-12 — Eval harness must test real code, not a replica [RESOLVED]
 
 - **Context:** the harness gave a false green — `async_settle` passed (`//=> 42`)
@@ -129,10 +159,11 @@ protocol changes. That's a real validation of the upfront design.
 - Pending decision: match Quokka's terser preview forms (low priority).
 
 **Gap 5 — Function naming.**
-- Quoll previews `setTimeout` as `[Function (anonymous)]` and `Promise` as
-  `[Function: Promise]` (`screenshots/quoll-fn-1.png`, `quoll-fn-2.png`).
-  `setTimeout` losing its name is suspect — likely a Deno-runtime or
-  serialization quirk worth confirming against Quokka. Low priority.
+- Quoll keeps Deno's truthful `[Function (anonymous)]` / `[Function: name]`
+  previews (the `λ` idiom was tried and dropped — see the always-on entry
+  above). Minor remaining quirk: `setTimeout` loses its name under Deno
+  (`[Function (anonymous)]`, not `[Function: setTimeout]`) — a runtime quirk,
+  low priority.
 
 (`image.png` was moved into `screenshots/`; new shots added 2026-06-12:
 `quoll-promises-3.png`, `quokka-live-comment-promises.png`, `quoll-fn-1.png`,
