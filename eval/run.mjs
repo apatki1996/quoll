@@ -12,16 +12,16 @@
 // Usage: DENO=$(mise which deno) node eval/run.mjs [caseName]
 import { spawn } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Aggregator } from "../src/render/aggregate.ts";
-import { buildLineMap } from "../src/instrument/sourcemap.ts";
+import { prepareRun } from "../src/instrument/index.ts";
 
+// The harness runs the host's EXACT pipeline (prepareRun = instrument + import
+// rewrite). Sharing this one assembly is what lets the harness catch host bugs:
+// a forgotten import rewrite, say, would fail the `imports` case here too.
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const require = createRequire(import.meta.url);
-const core = require(join(root, "native", `quoll-core.${process.platform}-${process.arch}.node`));
 const deno = process.env.DENO ?? "deno";
 
 // `==` (exact) is checked before `=>` (contains); the patterns are disjoint
@@ -54,16 +54,19 @@ function parseExpectations(source) {
 async function runCase(file) {
   const source = readFileSync(file, "utf8");
   const expect = parseExpectations(source);
-  const { code, mapJson, errors, sites } = core.instrument(source, {
-    filename: file,
-    jsx: false,
-  });
-  if (errors.length > 0) throw new Error(`instrument failed: ${errors[0].message}`);
-  const lineMap = buildLineMap(JSON.parse(mapJson));
-  const siteById = new Map(sites.map((s) => [s.id, s]));
+  const prepared = prepareRun(source, { filename: file, jsx: false }, root);
+  if (prepared.errors.length > 0) {
+    throw new Error(`instrument failed: ${prepared.errors[0].message}`);
+  }
 
-  const child = spawn(deno, ["run", "--quiet", "--no-prompt", join(root, "runner", "main.ts")]);
-  child.stdin.write(JSON.stringify({ t: "run", runId: 1, code, entry: file }) + "\n");
+  const child = spawn(deno, [
+    "run",
+    "--quiet",
+    "--no-prompt",
+    `--allow-read=${root}`,
+    join(root, "runner", "main.ts"),
+  ]);
+  child.stdin.write(JSON.stringify({ t: "run", runId: 1, code: prepared.code, entry: file }) + "\n");
   let out = "";
   child.stdout.on("data", (c) => {
     out += c;
@@ -77,7 +80,7 @@ async function runCase(file) {
   // replica): value/cover attribute via the capture sites, console/error via
   // the source map. The harness now tests the exact attribution + aggregation
   // the editor uses.
-  const agg = new Aggregator(siteById, (siteId) => lineMap.get(siteId));
+  const agg = new Aggregator(prepared.sites, (siteId) => prepared.toSourceLine(siteId));
   for (const raw of out.trim().split("\n")) agg.ingest(JSON.parse(raw));
   const values = agg.lineValues(); // line -> previews[]
   const coverage = agg.coverage(); // line -> covered|uncovered|partial

@@ -26,15 +26,22 @@ export type StartRunOpts = {
   runId: number;
   code: string;
   entry: string;
+  /** Scoped read access for resolving project imports (Phase 6). Read-only,
+   * never net/write/run — so imported code can read the project but can't
+   * exfiltrate. Absent = deny-all (no imports). */
+  allowReadDir?: string;
   onMessage: (msg: RunnerMsg) => void;
   /** Runner stderr (diagnostics) and spawn/parse failures. */
   onDiagnostic: (text: string) => void;
 };
 
 export function startRun(opts: StartRunOpts): RunHandle {
-  // Default-deny: no fs/net/env/run permissions. The runner only needs
-  // stdio, which is always available.
-  const child = spawn(opts.denoPath, ["run", "--quiet", "--no-prompt", opts.runnerMain], {
+  // Default-deny: no net/env/run/write. The only loosening is a scoped
+  // --allow-read for project imports (Phase 6); stdio is always available.
+  const args = ["run", "--quiet", "--no-prompt"];
+  if (opts.allowReadDir) args.push(`--allow-read=${opts.allowReadDir}`);
+  args.push(opts.runnerMain);
+  const child = spawn(opts.denoPath, args, {
     stdio: ["pipe", "pipe", "pipe"],
   });
 

@@ -2,10 +2,13 @@ import type { CaptureSite, InstrumentOpts, RawSourceMap } from "../../protocol/i
 import { identityInstrument } from "./identity.ts";
 import { loadNative } from "./native.ts";
 import { buildLineMap } from "./sourcemap.ts";
+import { rewriteImports } from "./resolve.ts";
 
 export type PreparedRun = {
   /** Code to send to the runner (instrumented JS, or source verbatim on fallback). */
   code: string;
+  /** Absolute paths of the entry's resolved relative imports (for the watch graph). */
+  deps: string[];
   /** Capture sites injected into `code`, keyed by id. Empty on fallback. */
   sites: Map<number, CaptureSite>;
   /**
@@ -32,7 +35,8 @@ export function prepareRun(
   const native = loadNative(extensionRoot);
   if (!native) {
     const { code } = identityInstrument(source, opts);
-    return { code, sites: new Map(), toSourceLine: (line) => line, errors: [] };
+    const { code: runnable, deps } = rewriteImports(code, opts.filename);
+    return { code: runnable, deps, sites: new Map(), toSourceLine: (line) => line, errors: [] };
   }
 
   // A throw here (napi call, map JSON, VLQ decode) would otherwise escape
@@ -40,13 +44,17 @@ export function prepareRun(
   try {
     const result = native.instrument(source, { filename: opts.filename, jsx: opts.jsx });
     if (result.errors.length > 0) {
-      return { code: "", sites: new Map(), toSourceLine: () => undefined, errors: result.errors };
+      return { code: "", deps: [], sites: new Map(), toSourceLine: () => undefined, errors: result.errors };
     }
 
     const map = JSON.parse(result.mapJson) as RawSourceMap;
     const lineMap = buildLineMap(map);
+    // Resolve relative project imports to absolute file:// so the runner's
+    // data: URL entry can load sibling files (Phase 6).
+    const { code: runnable, deps } = rewriteImports(result.code, opts.filename);
     return {
-      code: result.code,
+      code: runnable,
+      deps,
       sites: new Map(result.sites.map((s) => [s.id, s as CaptureSite])),
       toSourceLine: (line) => lineMap.get(line),
       errors: [],
@@ -55,6 +63,7 @@ export function prepareRun(
     const message = err instanceof Error ? err.message : String(err);
     return {
       code: "",
+      deps: [],
       sites: new Map(),
       toSourceLine: () => undefined,
       errors: [{ message: `instrumentation failed: ${message}` }],

@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import * as vscode from "vscode";
 import type { RemoteValue, RunnerMsg } from "../protocol/index.ts";
 import { prepareRun, type PreparedRun } from "./instrument/index.ts";
@@ -84,12 +85,17 @@ export class QuollSession implements vscode.Disposable {
     }
 
     this.output.appendLine(`[quoll] run #${runId} ${this.doc.fileName}`);
+    // Scope read access to the workspace folder (or the file's dir if loose),
+    // so relative imports resolve but nothing outside the project is readable.
+    const projectRoot = vscode.workspace.getWorkspaceFolder(this.doc.uri)?.uri.fsPath ??
+      dirname(this.doc.fileName);
     this.run = startRun({
       denoPath: config.get<string>("denoPath", "deno"),
       runnerMain: `${this.extensionRoot}/runner/main.ts`,
       runId,
       code: this.prepared.code,
       entry: this.doc.fileName,
+      allowReadDir: projectRoot,
       onMessage: (msg) => this.onMessage(msg),
       onDiagnostic: (text) => this.output.appendLine(`[runner] ${text}`),
     });
