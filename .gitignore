@@ -4,3 +4,5 @@ dist/
 *.vsix
 crates/quoll-core/target/
 native/
+
+LOG.md

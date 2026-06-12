@@ -50,3 +50,7 @@ Contributions are welcome — bug reports, feature requests, and PRs alike. A fe
 - New behavior in the instrument → run → render pipeline should come with a golden-eval case in `eval/cases/`.
 
 If you're unsure where to start, open an issue and ask.
+
+## License
+
+[MIT](LICENSE)
