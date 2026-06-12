@@ -3,7 +3,7 @@
 // tests share it; the eviction test floods it and therefore runs LAST.
 
 import { strict as assert } from "node:assert";
-import { expandObject, toRemoteValue } from "./serialize.ts";
+import { expandObject, settledPromiseValue, toRemoteValue } from "./serialize.ts";
 
 function entriesOf(objectId: string) {
   const outcome = expandObject(objectId);
@@ -19,6 +19,26 @@ Deno.test("primitives carry no objectId", () => {
   assert.equal(toRemoteValue(new Date(0)).objectId, undefined);
   assert.equal(toRemoteValue(/re/).objectId, undefined);
   assert.equal(toRemoteValue(Promise.resolve(1)).objectId, undefined);
+});
+
+Deno.test("settled promise: then/catch idiom, primitive carries no objectId", () => {
+  const fulfilled = settledPromiseValue("fulfilled", 42);
+  assert.equal(fulfilled.type, "promise");
+  assert.equal(fulfilled.preview, "then 42");
+  assert.equal(fulfilled.objectId, undefined);
+
+  const rejected = settledPromiseValue("rejected", "boom");
+  assert.equal(rejected.preview, 'catch "boom"');
+  assert.equal(rejected.objectId, undefined);
+});
+
+Deno.test("settled promise: resolved object is expandable", () => {
+  const remote = settledPromiseValue("fulfilled", { name: "Ada" });
+  assert.ok(remote.objectId, "expandable resolved value should register an objectId");
+  assert.deepEqual(
+    entriesOf(remote.objectId).map((e) => [e.key, e.value.preview]),
+    [["name", '"Ada"']],
+  );
 });
 
 Deno.test("same object captured twice keeps one objectId", () => {

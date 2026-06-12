@@ -46,9 +46,13 @@ function classify(v: unknown): RemoteValueType {
 
 /**
  * Types with children worth a tree node. date/regexp stringify fully in the
- * preview; promise stays preview-only because the only ways to read its state
- * (attaching .then, inspector) would mark user rejections handled and break
- * the unhandledrejection trap — Deno.inspect already previews settled values.
+ * preview; a PENDING promise stays preview-only (no children to show yet).
+ * A captured promise's settlement is tracked at the capture site (runner
+ * main.ts), which re-emits via `settledPromiseValue` once it resolves — so the
+ * resolved value, not the promise wrapper, is what becomes expandable. Tracking
+ * marks the captured promise handled, so Quoll reports its settled state inline
+ * (Quokka's `then`/`catch` idiom) and the global unhandledrejection trap covers
+ * only UNcaptured promises.
  */
 const EXPANDABLE: ReadonlySet<RemoteValueType> = new Set([
   "object",
@@ -123,6 +127,20 @@ export function toRemoteValue(v: unknown): RemoteValue {
   const type = classify(v);
   const value: RemoteValue = { type, preview: previewOf(v) };
   if (EXPANDABLE.has(type)) value.objectId = register(v as object);
+  return value;
+}
+
+/**
+ * A settled promise rendered as Quokka's `then <v>` / `catch <e>` idiom,
+ * re-emitted on the same siteId when a captured promise resolves (DECISIONS.md
+ * gaps 1 & 2). Keeps type "promise" so the host can style it as a settled
+ * promise; registers the settled value when expandable so the resolved object
+ * can be drilled into.
+ */
+export function settledPromiseValue(state: "fulfilled" | "rejected", settled: unknown): RemoteValue {
+  const label = state === "fulfilled" ? "then" : "catch";
+  const value: RemoteValue = { type: "promise", preview: `${label} ${previewOf(settled)}` };
+  if (EXPANDABLE.has(classify(settled))) value.objectId = register(settled as object);
   return value;
 }
 

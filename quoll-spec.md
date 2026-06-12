@@ -183,8 +183,10 @@ type HostMsg =
 type RunnerMsg = { runId: number; seq: number; ts: number } & (
   | { t: "console"; level: "log" | "info" | "warn" | "error" | "debug";
       args: RemoteValue[]; siteId?: number }          // console.* output
-  | { t: "value";  siteId: number; value: RemoteValue } // expression capture;
-      // re-emitted with the same siteId when a Promise settles late
+  | { t: "value";  siteId: number; value: RemoteValue; update?: true }
+      // expression capture; re-emitted with the same siteId + `update: true`
+      // when a Promise settles late — host REPLACES the prior value (pending →
+      // then/catch) rather than appending. Absent = fresh capture (append).
   | { t: "perf";   siteId: number; durationMs: number } // `//?.` timing
   | { t: "cover";  siteId: number; hits: number }        // statement & branch sites
   | { t: "error";  message: string; stack?: string; siteId?: number }

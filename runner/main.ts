@@ -15,7 +15,7 @@
 // Deno before resolution, but a value import would fail at runtime in the
 // packaged extension only.
 import type { ConsoleLevel, HostMsg, RunnerEvent, RunnerMsg } from "../protocol/index.ts";
-import { expandObject, toRemoteValue } from "./serialize.ts";
+import { expandObject, settledPromiseValue, toRemoteValue } from "./serialize.ts";
 
 // TODO(config): expose as `asyncGraceMs` per the spec's run-completion semantics.
 const ASYNC_GRACE_MS = 200;
@@ -149,6 +149,21 @@ function installQuollRuntime(): void {
       valuesSent.set(siteId, n);
       if (n <= VALUE_CAP_PER_SITE) {
         send({ t: "value", siteId, value: toRemoteValue(value) });
+        // Re-emit when a captured promise settles, so an un-awaited promise
+        // updates from `<pending>` to `then <v>` / `catch <e>` (DECISIONS.md
+        // gaps 1 & 2). The grace window stays alive while timers are pending,
+        // and `send` drops the re-emit if it settles after `exit` (event log
+        // sealed). Attaching .then marks this promise handled, so for a captured
+        // promise WE report its settled state inline rather than the global
+        // unhandledrejection trap (which still covers uncaptured promises).
+        if (value instanceof Promise) {
+          value.then(
+            (settled) =>
+              send({ t: "value", siteId, value: settledPromiseValue("fulfilled", settled), update: true }),
+            (reason) =>
+              send({ t: "value", siteId, value: settledPromiseValue("rejected", reason), update: true }),
+          );
+        }
       }
       return value;
     },

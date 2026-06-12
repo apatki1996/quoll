@@ -40,9 +40,13 @@ export type RunnerEvent =
   | { t: "console"; level: ConsoleLevel; args: RemoteValue[]; siteId?: number }
   /**
    * Expression capture. Re-emitted with the same siteId when a Promise
-   * settles late (after `done`, before `exit`).
+   * settles late (after `done`, before `exit`); the re-emit carries
+   * `update: true` so the host REPLACES the site's prior value (pending →
+   * `then <v>` / `catch <e>`) instead of appending it — a single evolving
+   * value, not a new capture. Absent/false means a fresh capture (append;
+   * loops produce several).
    */
-  | { t: "value"; siteId: number; value: RemoteValue }
+  | { t: "value"; siteId: number; value: RemoteValue; update?: true }
   /** `//?.` timing. */
   | { t: "perf"; siteId: number; durationMs: number }
   /** Statement & branch sites (see CaptureSiteKind). */
