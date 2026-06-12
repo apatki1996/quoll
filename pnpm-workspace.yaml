@@ -1,2 +1,7 @@
+# packages is required by pnpm <10 (a stale homebrew pnpm 9 shadows mise's 11
+# in login shells); root-only workspace either way.
+packages:
+  - "."
+
 allowBuilds:
   esbuild: true
