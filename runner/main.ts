@@ -95,6 +95,15 @@ function patchTimers(): void {
     if (id !== undefined && live.delete(id)) pendingTimers--;
     origClear(id);
   }) as typeof globalThis.clearTimeout;
+  // Timeouts and intervals share an id space, so clearInterval(timeoutId)
+  // clears a tracked timer too — it must maintain the pending count or the
+  // quiet window would hang until ASYNC_MAX_MS. (live never contains interval
+  // ids; setInterval is untracked, see above.)
+  const origClearInterval = globalThis.clearInterval.bind(globalThis);
+  globalThis.clearInterval = ((id?: TimerId) => {
+    if (id !== undefined && live.delete(id)) pendingTimers--;
+    origClearInterval(id);
+  }) as typeof globalThis.clearInterval;
 }
 
 /** Late async failures (timer throws, unhandled rejections) become protocol

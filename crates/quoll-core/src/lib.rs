@@ -71,20 +71,30 @@ pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
 
     let parser_ret = Parser::new(&allocator, &source, source_type).parse();
     if parser_ret.panicked || !parser_ret.errors.is_empty() {
+        let mut errors: Vec<InstrumentError> = parser_ret
+            .errors
+            .iter()
+            .map(|e| InstrumentError {
+                message: e.to_string(),
+                line: e.labels.as_ref().and_then(|labels| {
+                    labels.first().map(|l| offset_to_line(&source, l.offset() as u32))
+                }),
+            })
+            .collect();
+        // `panicked` with no diagnostics would otherwise look like success to
+        // the host (errors.length === 0) with empty code and an unparseable
+        // empty map_json.
+        if errors.is_empty() {
+            errors.push(InstrumentError {
+                message: "parser panicked without diagnostics".to_string(),
+                line: None,
+            });
+        }
         return InstrumentResult {
             code: String::new(),
             map_json: String::new(),
             sites: vec![],
-            errors: parser_ret
-                .errors
-                .iter()
-                .map(|e| InstrumentError {
-                    message: e.to_string(),
-                    line: e.labels.as_ref().and_then(|labels| {
-                        labels.first().map(|l| offset_to_line(&source, l.offset() as u32))
-                    }),
-                })
-                .collect(),
+            errors,
         };
     }
     let mut program = parser_ret.program;

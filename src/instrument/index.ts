@@ -35,17 +35,29 @@ export function prepareRun(
     return { code, sites: new Map(), toSourceLine: (line) => line, errors: [] };
   }
 
-  const result = native.instrument(source, { filename: opts.filename, jsx: opts.jsx });
-  if (result.errors.length > 0) {
-    return { code: "", sites: new Map(), toSourceLine: () => undefined, errors: result.errors };
-  }
+  // A throw here (napi call, map JSON, VLQ decode) would otherwise escape
+  // through runNow's debounce setTimeout and silently kill the session.
+  try {
+    const result = native.instrument(source, { filename: opts.filename, jsx: opts.jsx });
+    if (result.errors.length > 0) {
+      return { code: "", sites: new Map(), toSourceLine: () => undefined, errors: result.errors };
+    }
 
-  const map = JSON.parse(result.mapJson) as RawSourceMap;
-  const lineMap = buildLineMap(map);
-  return {
-    code: result.code,
-    sites: new Map(result.sites.map((s) => [s.id, s as CaptureSite])),
-    toSourceLine: (line) => lineMap.get(line),
-    errors: [],
-  };
+    const map = JSON.parse(result.mapJson) as RawSourceMap;
+    const lineMap = buildLineMap(map);
+    return {
+      code: result.code,
+      sites: new Map(result.sites.map((s) => [s.id, s as CaptureSite])),
+      toSourceLine: (line) => lineMap.get(line),
+      errors: [],
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      code: "",
+      sites: new Map(),
+      toSourceLine: () => undefined,
+      errors: [{ message: `instrumentation failed: ${message}` }],
+    };
+  }
 }
