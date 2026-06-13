@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { RemoteValue } from "../../protocol/index.ts";
+import { ContextValues } from "../constants.ts";
 import type { ExpandOutcome, QuollSession } from "../session.ts";
 
 /**
@@ -39,7 +40,7 @@ export class ValueExplorer implements vscode.TreeDataProvider<Node>, vscode.Disp
         item.description =
           `line ${node.line}` + (node.values.length > 1 ? ` · ×${node.values.length}` : "");
         item.tooltip = latest.preview;
-        item.contextValue = "quollValue";
+        item.contextValue = ContextValues.value;
         return item;
       }
       case "value": {
@@ -49,7 +50,7 @@ export class ValueExplorer implements vscode.TreeDataProvider<Node>, vscode.Disp
         );
         item.description = node.value.preview;
         item.tooltip = node.value.preview;
-        item.contextValue = "quollValue";
+        item.contextValue = ContextValues.value;
         return item;
       }
       case "info":

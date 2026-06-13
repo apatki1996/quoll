@@ -1,6 +1,7 @@
 import { dirname } from "node:path";
 import * as vscode from "vscode";
 import type { RemoteValue, RunnerMsg } from "../protocol/index.ts";
+import { config } from "./configuration.ts";
 import { prepareRun, type PreparedRun } from "./instrument/index.ts";
 import { Aggregator } from "./render/aggregate.ts";
 import { Renderer } from "./render/decorations.ts";
@@ -60,14 +61,12 @@ export class QuollSession implements vscode.Disposable {
 
   private scheduleRun(): void {
     if (this.debounce !== undefined) clearTimeout(this.debounce);
-    const delay = vscode.workspace.getConfiguration("quoll").get<number>("debounceMs", 300);
-    this.debounce = setTimeout(() => this.runNow(), delay);
+    this.debounce = setTimeout(() => this.runNow(), config.debounceMs());
   }
 
   private runNow(): void {
     this.run?.cancel();
     const runId = ++this.runId;
-    const config = vscode.workspace.getConfiguration("quoll");
 
     this.prepared = prepareRun(
       this.doc.getText(),
@@ -102,7 +101,7 @@ export class QuollSession implements vscode.Disposable {
     const projectRoot =
       vscode.workspace.getWorkspaceFolder(this.doc.uri)?.uri.fsPath ?? dirname(this.doc.fileName);
     this.run = startRun({
-      denoPath: config.get<string>("denoPath", "deno"),
+      denoPath: config.denoPath(),
       // Staged to a neutral temp dir so byonm resolves the project's
       // node_modules via cwd, not the extension's own (see stageRunner).
       runnerMain: stageRunner(this.extensionRoot),
