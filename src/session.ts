@@ -95,8 +95,9 @@ export class QuollSession implements vscode.Disposable {
     }
 
     this.output.appendLine(`[quoll] run #${runId} ${this.doc.fileName}`);
-    // Scope read access to the workspace folder (or the file's dir if loose),
-    // so relative imports resolve but nothing outside the project is readable.
+    // The workspace folder (or the file's dir if loose) scopes read access AND
+    // roots node_modules resolution — imports resolve, nothing outside the
+    // project is readable (see StartRunOpts.projectRoot).
     const projectRoot = vscode.workspace.getWorkspaceFolder(this.doc.uri)?.uri.fsPath ??
       dirname(this.doc.fileName);
     this.run = startRun({
@@ -105,7 +106,7 @@ export class QuollSession implements vscode.Disposable {
       runId,
       code: this.prepared.code,
       entry: this.doc.fileName,
-      allowReadDir: projectRoot,
+      projectRoot,
       onMessage: (msg) => this.onMessage(msg),
       onDiagnostic: (text) => this.output.appendLine(`[runner] ${text}`),
     });

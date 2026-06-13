@@ -3,7 +3,7 @@ import { strict as assert } from "node:assert";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { collectDeps, resolveSpecifier, rewriteImports } from "./resolve.ts";
+import { collectDeps, resolveRequests, resolveSpecifier, rewriteImports } from "./resolve.ts";
 
 const tmp = Deno.makeTempDirSync({ prefix: "quoll-resolve-" });
 writeFileSync(join(tmp, "util.ts"), "export const x = 1;\n");
@@ -37,6 +37,33 @@ Deno.test("collectDeps: transitive graph, cycle-safe, entry excluded", () => {
     deps,
     [join(tmp, "a.ts"), join(tmp, "b.ts"), join(tmp, "lib", "index.ts"), join(tmp, "util.ts")].sort(),
   );
+});
+
+Deno.test("resolveRequests: relative -> file://, bare -> npm:, scheme'd/unresolvable skipped", () => {
+  const { rewrites, deps } = resolveRequests(
+    ["./util", "node:assert", "lodash", "@scope/pkg/sub", "./missing", "./lib", "/abs/path"],
+    join(tmp, "main.ts"),
+  );
+  assert.deepEqual(rewrites, {
+    "./util": pathToFileURL(join(tmp, "util.ts")).href,
+    "./lib": pathToFileURL(join(tmp, "lib", "index.ts")).href,
+    "lodash": "npm:lodash",
+    "@scope/pkg/sub": "npm:@scope/pkg/sub",
+  });
+  assert.deepEqual(
+    [...deps].sort(),
+    [join(tmp, "lib", "index.ts"), join(tmp, "util.ts")].sort(),
+  );
+});
+
+Deno.test("collectDeps: custom lister is used and bare specifiers are skipped", () => {
+  const calls: string[] = [];
+  const deps = collectDeps("ENTRY", join(tmp, "main.ts"), (code, path) => {
+    calls.push(path);
+    return code === "ENTRY" ? ["./util.ts", "node:assert"] : [];
+  });
+  assert.deepEqual(deps, [join(tmp, "util.ts")]);
+  assert.deepEqual(calls, [join(tmp, "main.ts"), join(tmp, "util.ts")]);
 });
 
 Deno.test("rewriteImports: relative -> file://, collects deps, leaves bare alone", () => {

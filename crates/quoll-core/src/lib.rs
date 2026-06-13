@@ -5,25 +5,32 @@
 //! value-capture/coverage injection into this same pass, which is the whole
 //! reason this pipeline is single-pass (no source-map composition).
 
+mod imports;
 mod instrument;
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use napi_derive::napi;
 use oxc_allocator::Allocator;
-use oxc_ast_visit::VisitMut;
+use oxc_ast_visit::{Visit, VisitMut};
 use oxc_codegen::{Codegen, CodegenOptions};
 use oxc_parser::Parser;
 use oxc_semantic::SemanticBuilder;
 use oxc_span::SourceType;
 use oxc_transformer::{TransformOptions, Transformer};
 
+use imports::{ImportRewriter, RequestCollector};
 use instrument::Instrumenter;
 
 #[napi(object)]
 pub struct InstrumentOpts {
     pub filename: String,
     pub jsx: bool,
+    /// Module-specifier replacements (original → resolved), applied at the
+    /// AST level before codegen. The host builds this from `list_imports`
+    /// output (Phase 6 import resolution). Absent/empty = no rewriting.
+    pub rewrites: Option<HashMap<String, String>>,
 }
 
 #[napi(object)]
@@ -54,6 +61,22 @@ pub struct InstrumentResult {
     pub sites: Vec<NapiCaptureSite>,
     /// Fatal parse/transform errors. Non-empty means `code` is unusable.
     pub errors: Vec<InstrumentError>,
+}
+
+/// Parse-only listing of the source's module requests (static import/export
+/// sources + string-literal dynamic imports), so the host can resolve them
+/// BEFORE calling `instrument` with the resulting rewrite map. Parse errors
+/// are not reported here — `instrument` is the error authority — but requests
+/// collected from the partial AST are still returned.
+#[napi]
+pub fn list_imports(source: String, filename: String, jsx: bool) -> Vec<String> {
+    let allocator = Allocator::default();
+    let source_type = SourceType::from_path(Path::new(&filename))
+        .unwrap_or_else(|_| if jsx { SourceType::tsx() } else { SourceType::ts() });
+    let parser_ret = Parser::new(&allocator, &source, source_type).parse();
+    let mut collector = RequestCollector::default();
+    collector.visit_program(&parser_ret.program);
+    collector.requests
 }
 
 fn offset_to_line(source: &str, offset: u32) -> u32 {
@@ -115,6 +138,12 @@ pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
                 .map(|e| InstrumentError { message: e.to_string(), line: None })
                 .collect(),
         };
+    }
+
+    // Phase 6: apply host-resolved import rewrites in the AST so they land in
+    // the generated code through the same single codegen/source-map pass.
+    if let Some(rewrites) = opts.rewrites.as_ref().filter(|m| !m.is_empty()) {
+        ImportRewriter::new(&allocator, rewrites).visit_program(&mut program);
     }
 
     // Phase 4: inject value-capture + coverage into the SAME AST before the

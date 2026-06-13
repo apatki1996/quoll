@@ -2,7 +2,7 @@ import type { CaptureSite, InstrumentOpts, RawSourceMap } from "../../protocol/i
 import { identityInstrument } from "./identity.ts";
 import { loadNative } from "./native.ts";
 import { buildLineMap } from "./sourcemap.ts";
-import { collectDeps, rewriteImports } from "./resolve.ts";
+import { collectDeps, resolveRequests, rewriteImports } from "./resolve.ts";
 
 export type PreparedRun = {
   /** Code to send to the runner (instrumented JS, or source verbatim on fallback). */
@@ -43,19 +43,25 @@ export function prepareRun(
   // A throw here (napi call, map JSON, VLQ decode) would otherwise escape
   // through runNow's debounce setTimeout and silently kill the session.
   try {
-    const result = native.instrument(source, { filename: opts.filename, jsx: opts.jsx });
+    // Phase 6: list the entry's module requests (parse-accurate, so import
+    // lookalikes inside string literals can't false-match), resolve relative
+    // ones to absolute file:// URLs (the runner's data: URL entry can't
+    // resolve relative specifiers), and let the Rust pass swap them in the
+    // AST before its single codegen.
+    const requests = native.listImports(source, opts.filename, opts.jsx);
+    const { rewrites } = resolveRequests(requests, opts.filename);
+    const result = native.instrument(source, { filename: opts.filename, jsx: opts.jsx, rewrites });
     if (result.errors.length > 0) {
       return { code: "", deps: [], sites: new Map(), toSourceLine: () => undefined, errors: result.errors };
     }
 
     const map = JSON.parse(result.mapJson) as RawSourceMap;
     const lineMap = buildLineMap(map);
-    // Resolve relative project imports to absolute file:// so the runner's
-    // data: URL entry can load sibling files (Phase 6).
-    const { code: runnable } = rewriteImports(result.code, opts.filename);
-    const deps = collectDeps(result.code, opts.filename);
+    const deps = collectDeps(source, opts.filename, (code, path) =>
+      native.listImports(code, path, /\.[jt]sx$/.test(path)),
+    );
     return {
-      code: runnable,
+      code: result.code,
       deps,
       sites: new Map(result.sites.map((s) => [s.id, s as CaptureSite])),
       toSourceLine: (line) => lineMap.get(line),

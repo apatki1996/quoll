@@ -26,23 +26,35 @@ export type StartRunOpts = {
   runId: number;
   code: string;
   entry: string;
-  /** Scoped read access for resolving project imports (Phase 6). Read-only,
-   * never net/write/run — so imported code can read the project but can't
-   * exfiltrate. Absent = deny-all (no imports). */
-  allowReadDir?: string;
+  /**
+   * Project root (Phase 6). Drives three scoped loosenings — and nothing else:
+   * - `--allow-read=<root>`: file:// project imports are loadable (module
+   *   loads from a data: entry need read permission). Read-only, never
+   *   net/write/run — imported code can read the project but can't exfiltrate.
+   * - subprocess cwd: with `--node-modules-dir=manual`, npm: specifiers
+   *   resolve in THIS project's node_modules — local-only and deterministic
+   *   (without manual mode, Deno would fall back to its global npm cache and
+   *   even the network: wrong packages, silently).
+   * Absent = deny-all (no imports).
+   */
+  projectRoot?: string;
   onMessage: (msg: RunnerMsg) => void;
   /** Runner stderr (diagnostics) and spawn/parse failures. */
   onDiagnostic: (text: string) => void;
 };
 
 export function startRun(opts: StartRunOpts): RunHandle {
-  // Default-deny: no net/env/run/write. The only loosening is a scoped
-  // --allow-read for project imports (Phase 6); stdio is always available.
-  const args = ["run", "--quiet", "--no-prompt"];
-  if (opts.allowReadDir) args.push(`--allow-read=${opts.allowReadDir}`);
+  // Default-deny: no net/env/run/write. The only loosening is the scoped
+  // projectRoot trio (read/cwd/byonm — see StartRunOpts); stdio is always
+  // available. --sloppy-imports lets transitive PROJECT deps (real files
+  // loaded by Deno, not rewritten by the host) use extensionless/index
+  // specifiers, matching what the host's resolver accepts for the entry.
+  const args = ["run", "--quiet", "--no-prompt", "--node-modules-dir=manual", "--sloppy-imports"];
+  if (opts.projectRoot) args.push(`--allow-read=${opts.projectRoot}`);
   args.push(opts.runnerMain);
   const child = spawn(opts.denoPath, args, {
     stdio: ["pipe", "pipe", "pipe"],
+    cwd: opts.projectRoot,
   });
 
   child.on("error", (err) => {

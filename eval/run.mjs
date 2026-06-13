@@ -10,17 +10,19 @@
 // The harness runs the REAL pipeline: native instrument -> Deno runner ->
 // protocol messages -> line attribution, then diffs against expectations.
 // Usage: DENO=$(mise which deno) node eval/run.mjs [caseName]
-import { spawn } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Aggregator } from "../src/render/aggregate.ts";
 import { prepareRun } from "../src/instrument/index.ts";
+import { startRun } from "../src/runner/client.ts";
 
-// The harness runs the host's EXACT pipeline (prepareRun = instrument + import
-// rewrite). Sharing this one assembly is what lets the harness catch host bugs:
-// a forgotten import rewrite, say, would fail the `imports` case here too.
+// The harness runs the host's EXACT pipeline: prepareRun (instrument + import
+// resolution) AND startRun (the runner spawn, with its sandbox flags and
+// node_modules rooting). Sharing these assemblies is what lets the harness
+// catch host bugs: a forgotten import rewrite or a dropped spawn flag fails
+// the `imports`/`bare` cases here too.
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const deno = process.env.DENO ?? "deno";
 
@@ -59,45 +61,36 @@ async function runCase(file) {
     throw new Error(`instrument failed: ${prepared.errors[0].message}`);
   }
 
-  const child = spawn(deno, [
-    "run",
-    "--quiet",
-    "--no-prompt",
-    `--allow-read=${root}`,
-    join(root, "runner", "main.ts"),
-  ]);
-  child.stdin.write(JSON.stringify({ t: "run", runId: 1, code: prepared.code, entry: file }) + "\n");
-  let out = "";
-  child.stdout.on("data", (c) => {
-    out += c;
-    // The runner lingers after `exit` to serve expand (phase 5); the harness
-    // must kill it. Wait for the trailing newline so no line is cut mid-parse.
-    if (out.includes('"t":"exit"') && out.endsWith("\n")) child.kill();
+  // Fold the runner stream with the REAL host aggregator (shared code, not a
+  // replica): value/cover attribute via the capture sites, console/error via
+  // the source map. The harness tests the exact attribution + aggregation the
+  // editor uses. projectRoot mirrors the host's loose-file rule: the case's
+  // own directory (which also holds the fixtures and fixture node_modules).
+  const agg = new Aggregator(prepared.sites, (siteId) => prepared.toSourceLine(siteId));
+  const run = startRun({
+    denoPath: deno,
+    runnerMain: join(root, "runner", "main.ts"),
+    runId: 1,
+    code: prepared.code,
+    entry: file,
+    projectRoot: dirname(file),
+    onMessage: (msg) => {
+      agg.ingest(msg);
+      // The runner lingers after `exit` to serve expand (phase 5); the
+      // harness must kill it or `exited` never resolves.
+      if (msg.t === "exit") run.cancel();
+    },
+    onDiagnostic: () => {},
   });
   // Watchdog: a runner that never emits `exit` (crash before exit, grace-loop
-  // deadlock) must FAIL the case, not hang the harness/CI on `close` forever.
+  // deadlock) must FAIL the case, not hang the harness/CI forever.
   let timedOut = false;
   const watchdog = setTimeout(() => {
     timedOut = true;
-    child.kill("SIGKILL");
+    run.cancel();
   }, 15_000);
-  await new Promise((resolve) => child.on("close", resolve));
+  await run.exited;
   clearTimeout(watchdog);
-
-  // Fold the runner stream with the REAL host aggregator (shared code, not a
-  // replica): value/cover attribute via the capture sites, console/error via
-  // the source map. The harness now tests the exact attribution + aggregation
-  // the editor uses.
-  const agg = new Aggregator(prepared.sites, (siteId) => prepared.toSourceLine(siteId));
-  for (const raw of out.trim().split("\n")) {
-    if (!raw) continue; // no output at all (watchdog-killed before first event)
-    try {
-      agg.ingest(JSON.parse(raw));
-    } catch {
-      // SIGKILL can cut the last line mid-write; the lost events surface as
-      // expectation failures below rather than crashing the harness.
-    }
-  }
   const values = agg.lineValues(); // line -> previews[]
   const coverage = agg.coverage(); // line -> covered|uncovered|partial
   const errorsAt = agg.errorLines(); // line -> message

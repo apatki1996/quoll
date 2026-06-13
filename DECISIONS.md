@@ -17,6 +17,37 @@ future regression fails a test, not just memory.
 
 ---
 
+## 2026-06-12 — Import rewriting moved from regex to the Oxc AST pass [RESOLVED]
+
+- **Context:** the Phase 6 v1 specifier rewrite was a regex over the generated
+  code (`resolve.ts` SPECIFIER). Its acknowledged false-positive wasn't just
+  cosmetic: a user string literal containing an import-shaped substring (e.g.
+  `const s = 'import "./x" …'`) would be REWRITTEN, changing the program's
+  runtime-observable values — a truth violation, not a style nit.
+- **Decision:** specifier *finding* moves into the existing Rust pass. New napi
+  surface: `listImports(source, filename, jsx)` (parse-only module-request
+  listing) and an optional `rewrites: Record<specifier, replacement>` on
+  `instrument()`, applied to the AST's import positions (static import/export
+  sources + string-literal dynamic imports) before the single codegen. The host
+  resolves requests between the two calls (`resolveRequests`); *resolution*
+  stays in shared TS (`resolve.ts`) so the eval harness keeps testing the real
+  logic and node_modules/tsconfig-paths can plug into the same seam.
+- **Cost accepted:** two native parses per run (list + instrument). Parsing is
+  the cheap part of the pass; revisit under Phase 8 perf work with caching if
+  it ever shows up.
+- **Rejected:**
+  - *Span-based rewrite in TS* — parse spans are source positions, but the
+    rewrite must land in the generated code; tracking spans through
+    transform+codegen is exactly the complexity the single-pass design avoids.
+  - *Keeping the regex* — it corrupts user strings (golden traps now in
+    `eval/cases/imports.ts`). It survives only as the identity-fallback tier
+    (no native binary), where there is no parser to use.
+- **Golden cases:** `imports.ts` traps — an import-lookalike string and a
+  string whose entire value is a resolvable specifier; both must render
+  verbatim. Verified the old regex tier false-matches the first.
+- **Revisit if:** the fallback tier's regex bites someone (then consider
+  wasm/JS oxc parsing for fallback), or perf profiling flags the double parse.
+
 ## 2026-06-12 — Guiding principle: truthful/informative output over cosmetic Quokka parity [PRINCIPLE]
 
 - **Context:** a run of Quokka-vs-Quoll comparisons kept landing the same way —
