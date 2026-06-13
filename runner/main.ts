@@ -84,7 +84,11 @@ function patchTimers(): void {
   const origSet = globalThis.setTimeout.bind(globalThis);
   const origClear = globalThis.clearTimeout.bind(globalThis);
   const live = new Set<TimerId>();
-  globalThis.setTimeout = ((cb: (...cbArgs: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+  globalThis.setTimeout = ((
+    cb: (...cbArgs: unknown[]) => void,
+    delay?: number,
+    ...args: unknown[]
+  ) => {
     const id: TimerId = origSet(
       (...cbArgs: unknown[]) => {
         if (live.delete(id)) pendingTimers--;
@@ -159,9 +163,19 @@ function installQuollRuntime(): void {
         if (value instanceof Promise) {
           value.then(
             (settled) =>
-              send({ t: "value", siteId, value: settledPromiseValue("fulfilled", settled), update: true }),
+              send({
+                t: "value",
+                siteId,
+                value: settledPromiseValue("fulfilled", settled),
+                update: true,
+              }),
             (reason) =>
-              send({ t: "value", siteId, value: settledPromiseValue("rejected", reason), update: true }),
+              send({
+                t: "value",
+                siteId,
+                value: settledPromiseValue("rejected", reason),
+                update: true,
+              }),
           );
         }
       }
@@ -284,9 +298,8 @@ for await (const line of lines(Deno.stdin.readable)) {
       }
       break;
     case "expand": {
-      const outcome = msg.runId === runId
-        ? expandObject(msg.objectId)
-        : ({ error: "unknown" } as const);
+      const outcome =
+        msg.runId === runId ? expandObject(msg.objectId) : ({ error: "unknown" } as const);
       send(
         "error" in outcome
           ? { t: "expandResult", reqId: msg.reqId, entries: [], error: outcome.error }

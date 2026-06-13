@@ -51,7 +51,10 @@ child.stdout.on("data", (c) => {
 });
 await new Promise((resolve) => child.on("close", resolve));
 
-const msgs = out.trim().split("\n").map((l) => JSON.parse(l));
+const msgs = out
+  .trim()
+  .split("\n")
+  .map((l) => JSON.parse(l));
 const consoles = msgs.filter((m) => m.t === "console");
 assert.equal(consoles.length, 3, `expected 3 console messages, got ${consoles.length}`);
 
@@ -62,4 +65,6 @@ assert.equal(consoles[1].args[0].preview, "[ 1, 2 ]");
 assert.equal(consoles[2].args[0].preview, "5");
 
 console.log("phase3-check PASS");
-console.log(`  generated→source: ${consoles.map((m) => `${m.siteId}→${lineMap.get(m.siteId)}`).join(", ")}`);
+console.log(
+  `  generated→source: ${consoles.map((m) => `${m.siteId}→${lineMap.get(m.siteId)}`).join(", ")}`,
+);

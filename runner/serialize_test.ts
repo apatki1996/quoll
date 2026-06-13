@@ -54,7 +54,10 @@ Deno.test("object expansion: own props, in order", () => {
   const entries = entriesOf(remote.objectId!);
   assert.deepEqual(
     entries.map((e) => [e.key, e.value.preview]),
-    [["name", '"Ada"'], ["year", "1815"]],
+    [
+      ["name", '"Ada"'],
+      ["year", "1815"],
+    ],
   );
 });
 
@@ -64,7 +67,10 @@ Deno.test("nested objects are expandable through entries", () => {
   assert.equal(inner.value.type, "object");
   assert.ok(inner.value.objectId);
   const deep = entriesOf(inner.value.objectId!);
-  assert.deepEqual(deep.map((e) => [e.key, e.value.preview]), [["deep", "true"]]);
+  assert.deepEqual(
+    deep.map((e) => [e.key, e.value.preview]),
+    [["deep", "true"]],
+  );
 });
 
 Deno.test("array expansion: indices, overflow marker, length", () => {
@@ -82,17 +88,30 @@ Deno.test("typed array expansion", () => {
   const entries = entriesOf(remote.objectId!);
   assert.deepEqual(
     entries.map((e) => [e.key, e.value.preview]),
-    [["0", "7"], ["1", "9"], ["length", "2"]],
+    [
+      ["0", "7"],
+      ["1", "9"],
+      ["length", "2"],
+    ],
   );
 });
 
 Deno.test("map expansion: key previews, size; keys are not registered", () => {
   const keyObj = { k: 1 };
-  const remote = toRemoteValue(new Map<unknown, unknown>([["a", 1], [keyObj, 2]]));
+  const remote = toRemoteValue(
+    new Map<unknown, unknown>([
+      ["a", 1],
+      [keyObj, 2],
+    ]),
+  );
   const entries = entriesOf(remote.objectId!);
   assert.deepEqual(
     entries.map((e) => [e.key, e.value.preview]),
-    [['"a"', "1"], ["{ k: 1 }", "2"], ["size", "2"]],
+    [
+      ['"a"', "1"],
+      ["{ k: 1 }", "2"],
+      ["size", "2"],
+    ],
   );
 });
 
@@ -101,17 +120,24 @@ Deno.test("set expansion: indices and size", () => {
   const entries = entriesOf(remote.objectId!);
   assert.deepEqual(
     entries.map((e) => [e.key, e.value.preview]),
-    [["0", '"x"'], ["1", '"y"'], ["size", "2"]],
+    [
+      ["0", '"x"'],
+      ["1", '"y"'],
+      ["size", "2"],
+    ],
   );
 });
 
 Deno.test("error expansion: name/message/stack first", () => {
   const remote = toRemoteValue(new RangeError("boom"));
   const entries = entriesOf(remote.objectId!);
-  assert.deepEqual(entries.slice(0, 2).map((e) => [e.key, e.value.preview]), [
-    ["name", '"RangeError"'],
-    ["message", '"boom"'],
-  ]);
+  assert.deepEqual(
+    entries.slice(0, 2).map((e) => [e.key, e.value.preview]),
+    [
+      ["name", '"RangeError"'],
+      ["message", '"boom"'],
+    ],
+  );
   assert.equal(entries[2]!.key, "stack");
 });
 
@@ -126,9 +152,7 @@ Deno.test("user getters are never invoked during expansion", () => {
   });
   const remote = toRemoteValue(trap);
   const entries = entriesOf(remote.objectId!); // must not throw
-  assert.deepEqual(entries, [
-    { key: "boom", value: { type: "function", preview: "[Getter]" } },
-  ]);
+  assert.deepEqual(entries, [{ key: "boom", value: { type: "function", preview: "[Getter]" } }]);
 });
 
 Deno.test("unknown id vs evicted id (LRU budget) — runs last", () => {

@@ -74,10 +74,7 @@ const HAS_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
  * - unresolvable relative specifiers are left alone so they surface as a real
  *   runtime error rather than being silently dropped.
  */
-export function resolveRequests(
-  requests: readonly string[],
-  entryPath: string,
-): ResolvedRequests {
+export function resolveRequests(requests: readonly string[], entryPath: string): ResolvedRequests {
   const fromDir = dirname(entryPath);
   const rewrites: Record<string, string> = {};
   const deps = new Set<string>();
@@ -113,12 +110,15 @@ export type RewriteResult = {
 export function rewriteImports(code: string, entryPath: string): RewriteResult {
   const fromDir = dirname(entryPath);
   const deps = new Set<string>();
-  const rewritten = code.replace(SPECIFIER, (whole, prefix: string, quote: string, spec: string) => {
-    const abs = resolveSpecifier(spec, fromDir);
-    if (!abs) return whole;
-    deps.add(abs);
-    return `${prefix}${quote}${pathToFileURL(abs).href}${quote}`;
-  });
+  const rewritten = code.replace(
+    SPECIFIER,
+    (whole, prefix: string, quote: string, spec: string) => {
+      const abs = resolveSpecifier(spec, fromDir);
+      if (!abs) return whole;
+      deps.add(abs);
+      return `${prefix}${quote}${pathToFileURL(abs).href}${quote}`;
+    },
+  );
   return { code: rewritten, deps: [...deps] };
 }
 

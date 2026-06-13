@@ -52,7 +52,13 @@ export function prepareRun(
     const { rewrites } = resolveRequests(requests, opts.filename);
     const result = native.instrument(source, { filename: opts.filename, jsx: opts.jsx, rewrites });
     if (result.errors.length > 0) {
-      return { code: "", deps: [], sites: new Map(), toSourceLine: () => undefined, errors: result.errors };
+      return {
+        code: "",
+        deps: [],
+        sites: new Map(),
+        toSourceLine: () => undefined,
+        errors: result.errors,
+      };
     }
 
     const map = JSON.parse(result.mapJson) as RawSourceMap;

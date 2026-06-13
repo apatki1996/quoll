@@ -1,0 +1,5 @@
+# Edition comes from Cargo.toml when run via `cargo fmt`; pinned here so a bare
+# `rustfmt` invocation also parses edition-2024 syntax. max_width mirrors the
+# JS/TS formatter's printWidth (100) for a consistent feel across the codebase.
+edition = "2024"
+max_width = 100

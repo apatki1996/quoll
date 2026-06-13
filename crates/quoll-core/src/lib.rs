@@ -71,8 +71,13 @@ pub struct InstrumentResult {
 #[napi]
 pub fn list_imports(source: String, filename: String, jsx: bool) -> Vec<String> {
     let allocator = Allocator::default();
-    let source_type = SourceType::from_path(Path::new(&filename))
-        .unwrap_or_else(|_| if jsx { SourceType::tsx() } else { SourceType::ts() });
+    let source_type = SourceType::from_path(Path::new(&filename)).unwrap_or_else(|_| {
+        if jsx {
+            SourceType::tsx()
+        } else {
+            SourceType::ts()
+        }
+    });
     let parser_ret = Parser::new(&allocator, &source, source_type).parse();
     let mut collector = RequestCollector::default();
     collector.visit_program(&parser_ret.program);
@@ -83,14 +88,23 @@ fn offset_to_line(source: &str, offset: u32) -> u32 {
     // Byte slice, not &str slice: a label offset landing mid-character must
     // not panic on a char boundary.
     let end = (offset as usize).min(source.len());
-    source.as_bytes()[..end].iter().filter(|&&b| b == b'\n').count() as u32 + 1
+    source.as_bytes()[..end]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count() as u32
+        + 1
 }
 
 #[napi]
 pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
     let allocator = Allocator::default();
-    let source_type = SourceType::from_path(Path::new(&opts.filename))
-        .unwrap_or_else(|_| if opts.jsx { SourceType::tsx() } else { SourceType::ts() });
+    let source_type = SourceType::from_path(Path::new(&opts.filename)).unwrap_or_else(|_| {
+        if opts.jsx {
+            SourceType::tsx()
+        } else {
+            SourceType::ts()
+        }
+    });
 
     let parser_ret = Parser::new(&allocator, &source, source_type).parse();
     if parser_ret.panicked || !parser_ret.errors.is_empty() {
@@ -100,7 +114,9 @@ pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
             .map(|e| InstrumentError {
                 message: e.to_string(),
                 line: e.labels.as_ref().and_then(|labels| {
-                    labels.first().map(|l| offset_to_line(&source, l.offset() as u32))
+                    labels
+                        .first()
+                        .map(|l| offset_to_line(&source, l.offset() as u32))
                 }),
             })
             .collect();
@@ -122,7 +138,10 @@ pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
     }
     let mut program = parser_ret.program;
 
-    let scoping = SemanticBuilder::new().build(&program).semantic.into_scoping();
+    let scoping = SemanticBuilder::new()
+        .build(&program)
+        .semantic
+        .into_scoping();
     let transform_options = TransformOptions::default();
     let transformer_ret =
         Transformer::new(&allocator, Path::new(&opts.filename), &transform_options)
@@ -135,7 +154,10 @@ pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
             errors: transformer_ret
                 .errors
                 .iter()
-                .map(|e| InstrumentError { message: e.to_string(), line: None })
+                .map(|e| InstrumentError {
+                    message: e.to_string(),
+                    line: None,
+                })
                 .collect(),
         };
     }
@@ -160,7 +182,10 @@ pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
 
     InstrumentResult {
         code: codegen_ret.code,
-        map_json: codegen_ret.map.map(|m| m.to_json_string()).unwrap_or_default(),
+        map_json: codegen_ret
+            .map
+            .map(|m| m.to_json_string())
+            .unwrap_or_default(),
         sites: instrumenter
             .sites
             .iter()

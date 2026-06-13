@@ -71,7 +71,10 @@ pub struct ImportRewriter<'a, 'm> {
 
 impl<'a, 'm> ImportRewriter<'a, 'm> {
     pub fn new(allocator: &'a Allocator, rewrites: &'m HashMap<String, String>) -> Self {
-        Self { allocator, rewrites }
+        Self {
+            allocator,
+            rewrites,
+        }
     }
 
     fn rewrite(&self, lit: &mut StringLiteral<'a>) {

@@ -3,7 +3,12 @@ import { strict as assert } from "node:assert";
 import { Aggregator, type SiteInfo } from "./aggregate.ts";
 
 function val(siteId: number, preview: string, update?: true) {
-  return { t: "value", siteId, value: { type: "object", preview }, ...(update ? { update } : {}) } as const;
+  return {
+    t: "value",
+    siteId,
+    value: { type: "object", preview },
+    ...(update ? { update } : {}),
+  } as const;
 }
 
 Deno.test("settling value replaces its own slot (update), not appends", () => {
@@ -35,7 +40,12 @@ Deno.test("a loop appends each capture at one site", () => {
 
 Deno.test("console attributes via genToSource (generated line -> source)", () => {
   const agg = new Aggregator(new Map(), (gen) => (gen === 9 ? 4 : undefined));
-  agg.ingest({ t: "console", level: "log", args: [{ type: "string", preview: '"hi"' }], siteId: 9 } as never);
+  agg.ingest({
+    t: "console",
+    level: "log",
+    args: [{ type: "string", preview: '"hi"' }],
+    siteId: 9,
+  } as never);
   assert.deepEqual(agg.lineValues().get(4), ['"hi"']);
 });
 
@@ -66,6 +76,9 @@ Deno.test("explorer roots are sorted by line; error lines via genToSource", () =
   agg.ingest(val(1, "seven"));
   agg.ingest(val(2, "two"));
   agg.ingest({ t: "error", message: "boom", siteId: 3 } as never);
-  assert.deepEqual(agg.valueSites().map((r) => r.line), [2, 7]);
+  assert.deepEqual(
+    agg.valueSites().map((r) => r.line),
+    [2, 7],
+  );
   assert.equal(agg.errorLines().get(3), "boom");
 });

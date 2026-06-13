@@ -35,27 +35,39 @@ Deno.test("collectDeps: transitive graph, cycle-safe, entry excluded", () => {
   const deps = collectDeps(entryCode, join(tmp, "main.ts")).sort();
   assert.deepEqual(
     deps,
-    [join(tmp, "a.ts"), join(tmp, "b.ts"), join(tmp, "lib", "index.ts"), join(tmp, "util.ts")].sort(),
+    [
+      join(tmp, "a.ts"),
+      join(tmp, "b.ts"),
+      join(tmp, "lib", "index.ts"),
+      join(tmp, "util.ts"),
+    ].sort(),
   );
 });
 
 Deno.test("resolveRequests: relative -> file://, builtin -> node:, bare -> npm:, scheme'd/unresolvable skipped", () => {
   const { rewrites, deps } = resolveRequests(
-    ["./util", "node:assert", "fs", "fs/promises", "lodash", "@scope/pkg/sub", "./missing", "./lib", "/abs/path"],
+    [
+      "./util",
+      "node:assert",
+      "fs",
+      "fs/promises",
+      "lodash",
+      "@scope/pkg/sub",
+      "./missing",
+      "./lib",
+      "/abs/path",
+    ],
     join(tmp, "main.ts"),
   );
   assert.deepEqual(rewrites, {
     "./util": pathToFileURL(join(tmp, "util.ts")).href,
     "./lib": pathToFileURL(join(tmp, "lib", "index.ts")).href,
-    "fs": "node:fs", // unprefixed Node builtin must become node:fs, not npm:fs
+    fs: "node:fs", // unprefixed Node builtin must become node:fs, not npm:fs
     "fs/promises": "node:fs/promises",
-    "lodash": "npm:lodash",
+    lodash: "npm:lodash",
     "@scope/pkg/sub": "npm:@scope/pkg/sub",
   });
-  assert.deepEqual(
-    [...deps].sort(),
-    [join(tmp, "lib", "index.ts"), join(tmp, "util.ts")].sort(),
-  );
+  assert.deepEqual([...deps].sort(), [join(tmp, "lib", "index.ts"), join(tmp, "util.ts")].sort());
 });
 
 Deno.test("collectDeps: custom lister is used and bare specifiers are skipped", () => {

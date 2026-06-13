@@ -39,6 +39,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Style gate: oxfmt (JS/TS) + cargo fmt --check (Rust). Fails fast before
+      # the slower build/eval steps. rustfmt ships with rust-toolchain@stable.
+      - name: Format check
+        run: pnpm run fmt:check
+
       # cargo build --release -> native/quoll-core.linux-x64.node (loaded by the
       # instrument pipeline; the eval harness silently falls back to identity if
       # it's missing, so building it first is what makes the eval meaningful).

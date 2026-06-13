@@ -18,8 +18,8 @@
 use oxc_allocator::{Allocator, Vec as ArenaVec};
 use oxc_ast::ast::*;
 use oxc_ast::{AstBuilder, NONE};
-use oxc_ast_visit::walk_mut;
 use oxc_ast_visit::VisitMut;
+use oxc_ast_visit::walk_mut;
 use oxc_span::{GetSpan, Span};
 
 pub struct SiteRec {
@@ -45,7 +45,11 @@ impl<'a> Instrumenter<'a> {
                 line_starts.push(i as u32 + 1);
             }
         }
-        Self { ast: AstBuilder::new(allocator), line_starts, sites: Vec::new() }
+        Self {
+            ast: AstBuilder::new(allocator),
+            line_starts,
+            sites: Vec::new(),
+        }
     }
 
     fn pos(&self, offset: u32) -> (u32, u32) {
@@ -60,7 +64,14 @@ impl<'a> Instrumenter<'a> {
         let id = self.sites.len() as u32;
         let (line, column) = self.pos(span.start);
         let (end_line, end_column) = self.pos(span.end);
-        self.sites.push(SiteRec { id, line, column, end_line, end_column, kind });
+        self.sites.push(SiteRec {
+            id,
+            line,
+            column,
+            end_line,
+            end_column,
+            kind,
+        });
         id
     }
 
@@ -70,10 +81,19 @@ impl<'a> Instrumenter<'a> {
     }
 
     /// `__quoll.<method>(<id>[, <arg>])`, every node spanned to `span`.
-    fn quoll_call(&self, method: &'static str, id: u32, arg: Option<Expression<'a>>, span: Span) -> Expression<'a> {
+    fn quoll_call(
+        &self,
+        method: &'static str,
+        id: u32,
+        arg: Option<Expression<'a>>,
+        span: Span,
+    ) -> Expression<'a> {
         let object = self.ast.expression_identifier(span, "__quoll");
         let property = self.ast.identifier_name(span, method);
-        let callee = Expression::from(self.ast.member_expression_static(span, object, property, false));
+        let callee = Expression::from(
+            self.ast
+                .member_expression_static(span, object, property, false),
+        );
         let mut args = self.ast.vec_with_capacity(2);
         args.push(Argument::from(self.ast.expression_numeric_literal(
             span,
@@ -108,7 +128,8 @@ impl<'a> Instrumenter<'a> {
 
     fn cover_statement(&mut self, span: Span) -> Statement<'a> {
         let id = self.new_site(span, "statement");
-        self.ast.statement_expression(span, self.quoll_call("cover", id, None, span))
+        self.ast
+            .statement_expression(span, self.quoll_call("cover", id, None, span))
     }
 
     /// Normalize a braceless body (`if (c) foo();`, `while (c) bar();`) into
@@ -127,9 +148,15 @@ impl<'a> Instrumenter<'a> {
 }
 
 fn is_console_call(expr: &Expression) -> bool {
-    let Expression::CallExpression(call) = expr else { return false };
-    let Some(member) = call.callee.as_member_expression() else { return false };
-    let MemberExpression::StaticMemberExpression(static_member) = member else { return false };
+    let Expression::CallExpression(call) = expr else {
+        return false;
+    };
+    let Some(member) = call.callee.as_member_expression() else {
+        return false;
+    };
+    let MemberExpression::StaticMemberExpression(static_member) = member else {
+        return false;
+    };
     matches!(&static_member.object, Expression::Identifier(ident) if ident.name == "console")
 }
 

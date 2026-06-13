@@ -99,8 +99,8 @@ export class QuollSession implements vscode.Disposable {
     // The workspace folder (or the file's dir if loose) scopes read access AND
     // roots node_modules resolution — imports resolve, nothing outside the
     // project is readable (see StartRunOpts.projectRoot).
-    const projectRoot = vscode.workspace.getWorkspaceFolder(this.doc.uri)?.uri.fsPath ??
-      dirname(this.doc.fileName);
+    const projectRoot =
+      vscode.workspace.getWorkspaceFolder(this.doc.uri)?.uri.fsPath ?? dirname(this.doc.fileName);
     this.run = startRun({
       denoPath: config.get<string>("denoPath", "deno"),
       // Staged to a neutral temp dir so byonm resolves the project's

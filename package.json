@@ -86,12 +86,15 @@
     "build:core": "node scripts/build-core.mjs",
     "check:phase3": "node scripts/phase3-check.mjs",
     "check:phase5": "node scripts/phase5-check.mjs",
-    "eval": "node eval/run.mjs"
+    "eval": "node eval/run.mjs",
+    "fmt": "oxfmt && cargo fmt --manifest-path crates/quoll-core/Cargo.toml",
+    "fmt:check": "oxfmt --check && cargo fmt --manifest-path crates/quoll-core/Cargo.toml --check"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.96.0",
     "esbuild": "^0.25.0",
+    "oxfmt": "^0.54.0",
     "typescript": "^5.5.0"
   },
   "packageManager": "pnpm@11.5.2"

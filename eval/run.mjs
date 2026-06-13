@@ -100,11 +100,17 @@ async function runCase(file) {
   if (timedOut) failures.push("runner never emitted `exit` within 15s (killed by watchdog)");
   for (const [line, want] of expect.values) {
     const got = (values.get(line) ?? []).join(", ");
-    if (!got.includes(want)) failures.push(`line ${line}: value want ⊇ ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
+    if (!got.includes(want))
+      failures.push(
+        `line ${line}: value want ⊇ ${JSON.stringify(want)}, got ${JSON.stringify(got)}`,
+      );
   }
   for (const [line, want] of expect.exact) {
     const got = (values.get(line) ?? []).join(", ");
-    if (got !== want) failures.push(`line ${line}: value want = ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
+    if (got !== want)
+      failures.push(
+        `line ${line}: value want = ${JSON.stringify(want)}, got ${JSON.stringify(got)}`,
+      );
   }
   for (const [line, want] of expect.coverage) {
     const got = coverage.get(line) ?? "none";
@@ -112,14 +118,19 @@ async function runCase(file) {
   }
   for (const [line, want] of expect.errors) {
     const got = errorsAt.get(line) ?? "";
-    if (!got.includes(want)) failures.push(`line ${line}: error want ⊇ ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
+    if (!got.includes(want))
+      failures.push(
+        `line ${line}: error want ⊇ ${JSON.stringify(want)}, got ${JSON.stringify(got)}`,
+      );
   }
   return failures;
 }
 
 const filter = process.argv[2];
 const caseDir = join(root, "eval", "cases");
-const files = readdirSync(caseDir).filter((f) => f.endsWith(".ts") && (!filter || f.includes(filter)));
+const files = readdirSync(caseDir).filter(
+  (f) => f.endsWith(".ts") && (!filter || f.includes(filter)),
+);
 let failed = 0;
 for (const f of files.sort()) {
   const failures = await runCase(join(caseDir, f));
@@ -131,5 +142,9 @@ for (const f of files.sort()) {
     for (const msg of failures) console.log(`       ${msg}`);
   }
 }
-console.log(failed === 0 ? `\neval: all ${files.length} cases pass` : `\neval: ${failed}/${files.length} cases FAILED`);
+console.log(
+  failed === 0
+    ? `\neval: all ${files.length} cases pass`
+    : `\neval: ${failed}/${files.length} cases FAILED`,
+);
 process.exit(failed === 0 ? 0 : 1);

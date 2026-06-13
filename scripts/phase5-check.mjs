@@ -71,7 +71,10 @@ send({ t: "expand", runId: 7, reqId: 1, objectId: value.value.objectId });
 const res1 = await nextOfType("expandResult");
 assert.equal(res1.reqId, 1);
 assert.equal(res1.error, undefined);
-assert.deepEqual(res1.entries.map((e) => e.key), ["name", "langs"]);
+assert.deepEqual(
+  res1.entries.map((e) => e.key),
+  ["name", "langs"],
+);
 const langs = res1.entries.find((e) => e.key === "langs");
 assert.equal(langs.value.type, "array");
 assert.ok(langs.value.objectId, "nested array must be expandable");
@@ -81,7 +84,11 @@ send({ t: "expand", runId: 7, reqId: 2, objectId: langs.value.objectId });
 const res2 = await nextOfType("expandResult");
 assert.deepEqual(
   res2.entries.map((e) => [e.key, e.value.preview]),
-  [["0", '"js"'], ["1", '"ts"'], ["length", "2"]],
+  [
+    ["0", '"js"'],
+    ["1", '"ts"'],
+    ["length", "2"],
+  ],
 );
 
 // 3) unknown id

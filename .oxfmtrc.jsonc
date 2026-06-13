@@ -1,0 +1,23 @@
+{
+  // Code defaults (printWidth 100, 2-space, double quotes, semicolons,
+  // trailing-comma "all") already match the existing style, so formatting code is
+  // whitespace-only churn. oxfmt honors .gitignore (covers dist/, node_modules/,
+  // native/); the exclusions below are the cases .gitignore doesn't handle.
+
+  // Preserve the VS Code extension manifest's hand-ordered keys; we want
+  // whitespace normalization, not a canonical resort of package.json.
+  "sortPackageJson": false,
+
+  "ignorePatterns": [
+    // Golden-eval FIXTURES: each line carries alignment-sensitive trailing
+    // annotations (//=> value, //~ covered, //! error) that the harness parses by
+    // line number. Reformatting could reflow expressions and silently break
+    // assertions, so these are hand-managed.
+    "eval/cases/**",
+    // Hand-written prose/spec docs — reflowing them is out of scope for a code
+    // formatter and would produce large, noisy diffs.
+    "**/*.md",
+    // Local editor/tool settings, not project source.
+    ".claude/**",
+  ],
+}

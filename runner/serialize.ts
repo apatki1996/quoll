@@ -137,7 +137,10 @@ export function toRemoteValue(v: unknown): RemoteValue {
  * promise; registers the settled value when expandable so the resolved object
  * can be drilled into.
  */
-export function settledPromiseValue(state: "fulfilled" | "rejected", settled: unknown): RemoteValue {
+export function settledPromiseValue(
+  state: "fulfilled" | "rejected",
+  settled: unknown,
+): RemoteValue {
   const label = state === "fulfilled" ? "then" : "catch";
   const value: RemoteValue = { type: "promise", preview: `${label} ${previewOf(settled)}` };
   if (EXPANDABLE.has(classify(settled))) value.objectId = register(settled as object);
