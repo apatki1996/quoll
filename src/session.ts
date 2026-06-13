@@ -90,7 +90,7 @@ export class QuollSession implements vscode.Disposable {
         this.output.appendLine(`✗ ${err.message}`);
         if (err.line !== undefined) errLines.set(err.line, err.message);
       }
-      this.renderer.setErrors(errLines);
+      this.renderer.setSnapshot(new Map(), new Map(), errLines);
       return; // wait for the next edit; nothing runnable
     }
 
@@ -207,9 +207,7 @@ export class QuollSession implements vscode.Disposable {
     queueMicrotask(() => {
       this.renderQueued = false;
       if (runId !== this.runId || !this.agg) return; // superseded by a newer run
-      this.renderer.setValues(this.agg.lineValues());
-      this.renderer.setCoverage(this.agg.coverage());
-      this.renderer.setErrors(this.agg.errorLines());
+      this.renderer.setSnapshot(this.agg.lineValues(), this.agg.coverage(), this.agg.errorLines());
     });
   }
 

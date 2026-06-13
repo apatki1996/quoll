@@ -74,19 +74,36 @@ async function runCase(file) {
     // must kill it. Wait for the trailing newline so no line is cut mid-parse.
     if (out.includes('"t":"exit"') && out.endsWith("\n")) child.kill();
   });
+  // Watchdog: a runner that never emits `exit` (crash before exit, grace-loop
+  // deadlock) must FAIL the case, not hang the harness/CI on `close` forever.
+  let timedOut = false;
+  const watchdog = setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGKILL");
+  }, 15_000);
   await new Promise((resolve) => child.on("close", resolve));
+  clearTimeout(watchdog);
 
   // Fold the runner stream with the REAL host aggregator (shared code, not a
   // replica): value/cover attribute via the capture sites, console/error via
   // the source map. The harness now tests the exact attribution + aggregation
   // the editor uses.
   const agg = new Aggregator(prepared.sites, (siteId) => prepared.toSourceLine(siteId));
-  for (const raw of out.trim().split("\n")) agg.ingest(JSON.parse(raw));
+  for (const raw of out.trim().split("\n")) {
+    if (!raw) continue; // no output at all (watchdog-killed before first event)
+    try {
+      agg.ingest(JSON.parse(raw));
+    } catch {
+      // SIGKILL can cut the last line mid-write; the lost events surface as
+      // expectation failures below rather than crashing the harness.
+    }
+  }
   const values = agg.lineValues(); // line -> previews[]
   const coverage = agg.coverage(); // line -> covered|uncovered|partial
   const errorsAt = agg.errorLines(); // line -> message
 
   const failures = [];
+  if (timedOut) failures.push("runner never emitted `exit` within 15s (killed by watchdog)");
   for (const [line, want] of expect.values) {
     const got = (values.get(line) ?? []).join(", ");
     if (!got.includes(want)) failures.push(`line ${line}: value want ⊇ ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);

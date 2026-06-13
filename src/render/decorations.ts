@@ -59,27 +59,24 @@ export class Renderer implements vscode.Disposable {
 
   constructor(private readonly doc: vscode.TextDocument) {}
 
-  /** Value + console previews per line (already aggregated, in display order). */
-  setValues(byLine: Map<number, string[]>): void {
-    this.values = byLine;
-    this.apply();
-  }
-
-  setErrors(byLine: Map<number, string>): void {
-    this.errors = byLine;
-    this.apply();
-  }
-
-  setCoverage(coverage: Map<number, CoverageState>): void {
+  /**
+   * Replace the whole snapshot and paint ONCE. A single entry point (rather
+   * than per-kind setters) so one render pass can't repaint three times —
+   * `apply()` recomputes every decoration kind regardless of what changed.
+   */
+  setSnapshot(
+    values: Map<number, string[]>,
+    coverage: Map<number, CoverageState>,
+    errors: Map<number, string>,
+  ): void {
+    this.values = values;
     this.coverage = coverage;
+    this.errors = errors;
     this.apply();
   }
 
   clear(): void {
-    this.values = new Map();
-    this.errors = new Map();
-    this.coverage = new Map();
-    this.apply();
+    this.setSnapshot(new Map(), new Map(), new Map());
   }
 
   /** Re-apply to current editors (tab switches recreate TextEditor objects). */

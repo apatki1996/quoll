@@ -115,15 +115,17 @@ export class Aggregator {
     return cov;
   }
 
+  // All getters return snapshots, never internal state: consumers (renderer,
+  // explorer) hold the result across later ingests and must not see it mutate.
   errorLines(): Map<number, string> {
-    return this.errs;
+    return new Map(this.errs);
   }
 
   /** Explorer roots: captured values by source line (value sites only), sorted. */
   valueSites(): { line: number; values: RemoteValue[] }[] {
     const roots: { line: number; values: RemoteValue[] }[] = [];
     for (const { line, values } of this.siteValues.values()) {
-      if (values.length > 0) roots.push({ line, values });
+      if (values.length > 0) roots.push({ line, values: [...values] });
     }
     return roots.sort((a, b) => a.line - b.line);
   }
