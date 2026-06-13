@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { Commands, OUTPUT_CHANNEL, Views } from "./constants.ts";
 import { ValueExplorer } from "./explorer/tree.ts";
 import { QuollSession } from "./session.ts";
 
@@ -8,19 +9,19 @@ let session: QuollSession | undefined;
 let explorer: ValueExplorer;
 
 export function activate(context: vscode.ExtensionContext): void {
-  output = vscode.window.createOutputChannel("Quoll");
+  output = vscode.window.createOutputChannel(OUTPUT_CHANNEL);
   extensionRoot = context.extensionUri.fsPath;
   explorer = new ValueExplorer();
   context.subscriptions.push(
     output,
     explorer,
-    vscode.window.registerTreeDataProvider("quollValues", explorer),
-    vscode.commands.registerCommand("quoll.start", startOnCurrentFile),
-    vscode.commands.registerCommand("quoll.stop", () => {
+    vscode.window.registerTreeDataProvider(Views.values, explorer),
+    vscode.commands.registerCommand(Commands.start, startOnCurrentFile),
+    vscode.commands.registerCommand(Commands.stop, () => {
       stopSession();
       output.appendLine("[quoll] session stopped");
     }),
-    vscode.commands.registerCommand("quoll.copyValue", (node: unknown) => {
+    vscode.commands.registerCommand(Commands.copyValue, (node: unknown) => {
       const text = explorer.copyText(node as Parameters<ValueExplorer["copyText"]>[0]);
       if (text !== undefined) void vscode.env.clipboard.writeText(text);
     }),

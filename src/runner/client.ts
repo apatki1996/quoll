@@ -6,6 +6,7 @@
 
 import { spawn } from "node:child_process";
 import type { HostMsg, RunnerMsg } from "../../protocol/index.ts";
+import { EXTENSION_ID } from "../constants.ts";
 
 export type RunHandle = {
   cancel(): void;
@@ -63,7 +64,7 @@ export function startRun(opts: StartRunOpts): RunHandle {
   child.on("error", (err) => {
     opts.onDiagnostic(
       `failed to spawn runner (${opts.denoPath}): ${err.message}. ` +
-        `Install Deno or set quoll.denoPath.`,
+        `Install Deno or set ${EXTENSION_ID}.denoPath.`,
     );
   });
   // A failed spawn (ENOENT) destroys the stdio streams with an error; without
