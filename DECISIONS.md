@@ -17,6 +17,183 @@ future regression fails a test, not just memory.
 
 ---
 
+## 2026-06-12 — Phase 6 bare specifiers: how to anchor npm resolution [DECIDED 2026-06-13 — Option 1]
+
+- **Context:** relative project imports work (rewritten to absolute `file://`),
+  but bare specifiers (`import _ from "lodash"`) fail. We need to decide HOW the
+  runner finds the user's `node_modules` before landing the bare-specifier path
+  (commit B). This entry records the analysis so the call is informed, not the
+  call itself.
+- **Root cause (verified by probes against Deno 2.8.3, not docs):** Deno's
+  bring-your-own-node_modules (byonm, `--node-modules-dir=manual`) anchors npm
+  resolution to the **main module's nearest `package.json`** — which is the
+  RUNNER's location. The runner ships *inside* the extension (which has a
+  `package.json`), so byonm looks in the extension's `node_modules`, never the
+  user's project. `cwd` is only a *fallback*, used when the main module has no
+  `package.json` ancestor. The user's code is imported via a `data:` URL, which
+  has no filesystem location, so it can't anchor resolution either — this is the
+  cost of the data:-URL sandbox choice (see the deny-all sandbox entry).
+- **Empirically established (each a probe, recorded so we don't re-derive):**
+  - runner entry under a `package.json` tree + `cwd=project` → FAIL (anchors to
+    the runner's tree, ignores cwd).
+  - `--config <file>` DOES re-anchor byonm, BUT the config must physically sit
+    in the project root (a config shipped with the extension, or pointed at from
+    outside the project, does not work). So it only helps projects that already
+    have a `deno.json`/`deno.jsonc`.
+  - runner entry in a dir with NO `package.json` ancestor + `cwd=project` →
+    **works**, including a `package.json`-only project (no deno.json), with no
+    writes and no config — byonm falls back to cwd. (`hello quoll 42` against a
+    real fixture.)
+  - `import type` targets are stripped at runtime, so the runner's runtime
+    closure is just `runner/main.ts` + `runner/serialize.ts` (`protocol/*` are
+    type-only) — "moving the runner" means copying two small files.
+- **How Quokka achieves a "secure environment" (INFERENCE — Quokka is
+  closed-source; reasoned from the Node platform + observable behavior, NOT
+  authoritative):** Quokka almost certainly does NOT sandbox. It runs your code
+  in a stock **Node.js** process, which has no real permission system, so the
+  code has full fs/net/env/subprocess access — identical to `node yourfile.js`.
+  (Even Node's `vm` module is explicitly not a security boundary for untrusted
+  code, so any scope isolation there isn't a sandbox either.) Quokka's model is
+  **trust, not isolation**: you opt a *specific file you're actively editing*
+  into it, on code you already trust; the boundary is your decision to run it,
+  not a runtime jail. Pen-testing wouldn't surface "sandbox escapes" because
+  there is no sandbox — running the edited file with user privileges is the
+  intended design. **Therefore Quoll's threat model is deliberately STRONGER
+  than Quokka's:** Quoll auto-runs on every keystroke, including freshly-cloned
+  untrusted repos opened only to read — which is exactly why Quoll runs under
+  Deno deny-all where Quokka can lean on trust. "Match Quokka's capabilities in
+  Quoll's honest idiom" (the truthful-over-cosmetic principle) extends to
+  security: match the live-eval capability without inheriting the full-trust
+  posture.
+- **What the linked sources add (and a correction):**
+  - `denoland/deno#6694` ("Runtime features to support Quokka.js", filed by the
+    Quokka team) reveals the actual mechanism: they instrument by **duck-punching
+    `fs.readFileSync`** so Node loads the *real file path* but receives
+    *instrumented content* — real-path module resolution AND real stack-trace
+    paths **without writing instrumented code to disk**. They also **recycle
+    runner processes** (`unref`/`ref` a socket) for keystroke speed. **This trick
+    is Node-only:** Deno exposes no compiler/loader hook (`deno#1739`), which is
+    exactly what blocked their Deno support. **Correction to the inference above:**
+    Quokka does NOT necessarily write a transformed copy of your code to disk — in
+    Node it swaps content in-memory. The data:-URL is Quoll's Deno-native
+    equivalent of "don't write user code to disk," and Option 1 (stage runner +
+    `cwd`) is the closest we can get to Quokka's *no-write, real-resolution*
+    property given Deno has no readFileSync seam.
+  - `wallabyjs/quokka#456` (Deno-support request): confirms Quokka is Node-first
+    and leans on Node's `node_modules` walk; little else.
+  - `secure.software` scan of the Quokka VS Code extension: findings are
+    **bundled-dependency CVEs** (lodash, uglify-js, rollup, ws, tar-fs, xmldom…)
+    plus "execution-hijacking"/embedded-credential flags — rated **SAFE overall,
+    no malware** (CVE specifics as reported by the scanner; treat as approximate).
+    Decision-relevant: these are NOT sandbox-escape findings — consistent with
+    "Quokka has no sandbox to escape." The comparable risk axis for Quoll is our
+    OWN dependency hygiene (the extension's bundled JS deps), kept small by a Rust
+    napi core + Deno + a thin esbuild bundle. Track separately from the user-code
+    sandbox.
+- **Option 1 (stage the runner in a neutral temp dir; KEEP the data: URL) —
+  recommended:**
+  - *Mechanism:* copy `main.ts` + `serialize.ts` into an OS temp dir (no
+    `package.json` ancestor); spawn `deno run <tmp>/main.ts` with
+    `cwd=projectRoot`. byonm falls back to cwd → resolves the project's
+    `node_modules`. User code still travels via the data: URL; nothing of the
+    user's is written to disk.
+  - *Benefits:* universal (deno.json AND package.json-only projects); preserves
+    every data:-URL sandbox property (never writes user code to disk, never
+    mutates the user's project, no-import files still run pure deny-all); small
+    additive change (a staging helper + a path swap in `client.ts`); only inert,
+    static, cacheable runner files touch disk.
+  - *Drawbacks:* adds a temp-dir lifecycle (create/cleanup, invalidate on
+    extension-version change); assumes the OS temp root has no `package.json`
+    ancestor (true on macOS/Linux/Windows defaults — worth a guard); does NOT
+    simplify the data:-URL line-attribution regex; npm execution still rides on
+    Deno's node-compat (already exercised by the CJS + ESM fixtures).
+- **Comparison:**
+
+  | approach | user code on disk | mutates user project | bare imports | sandbox |
+  |---|---|---|---|---|
+  | Quokka (Node) | no — in-memory content swap (readFileSync patch, Node-only) | no (real paths, not rewritten on disk) | free | none — trust-based, full-privilege Node |
+  | Quoll today (data:, runner in place) | no | no | broken | Deno deny-all (+read project) |
+  | Quokka-style for Quoll (write into project) | yes, every keystroke | yes | free | weaker — writes into the untrusted repo |
+  | **Option 1** | no | no | works | Deno deny-all (+read project) |
+
+- **Alternatives still on the table:**
+  - *Option 0 — write instrumented code to a real file in the project* (the
+    Quokka route): relative+bare resolve "for free" and stack traces get real
+    file paths (simpler than the data:-URL regex), BUT it writes a transformed
+    copy of the user's code into their working tree every keystroke — the exact
+    thing the data:-URL design avoids; weakest story for the untrusted-repo
+    threat model; needs per-run temp lifecycle + cleanup.
+  - *Option 2 — `--config` to the project's deno.json:* simplest, but Deno-config
+    projects only; npm-only projects (the common case) get nothing; the eval
+    fixture would need a committed `deno.json`.
+  - *Option 3 — host-resolve bare → absolute `file://`* (like relative): all in
+    shared TS, universal, but CJS packages (`module.exports`) may not load via a
+    bare `file://` import without npm: node-compat — the CJS fixture is the risk.
+- **Precedent — anchoring resolution to a chosen root (not the tool's own
+  install dir) is standard practice, not a hack.** Node resolves `node_modules`
+  by walking up from the *importing file's* directory, so a tool that runs your
+  code *in place* gets project resolution free; a tool whose own code lives
+  elsewhere points resolution back at a chosen root. Established mechanisms that
+  do exactly that:
+  - **Node core — `NODE_PATH`** (documented env var adding resolution roots) and
+    **`require.resolve(req, { paths })`** (resolve from arbitrary roots). The
+    canonical "resolve from the working directory, not from my install location"
+    pattern is `require.resolve(m, { paths: [process.cwd()] })`, packaged as
+    sindresorhus's `resolve-cwd`. This is the closest direct analog to Option 1:
+    runner lives elsewhere, resolution anchored to `cwd=projectRoot`.
+  - **Jest** runs your code in its own harness but anchors module resolution to
+    the project root via `roots`, `moduleDirectories`, and `modulePaths` — the
+    docs describe `modulePaths` as literally "an alternative API to setting the
+    `NODE_PATH` environment variable."
+  - **webpack** gathers `resolve.modules` search dirs from the **context**
+    directory (defaults to cwd), i.e. root-anchored, not loader-location-anchored.
+  - **Deno itself** walks up to the nearest `package.json` and uses cwd as the
+    discovery base when none is closer — the exact documented behavior Option 1
+    leverages.
+  Takeaway: Option 1 is Node-ecosystem-standard "resolve from the project root"
+  applied to Deno's cwd-fallback. The only Quoll-specific twist is staging the
+  runner in a neutral dir so cwd (not the runner's own `package.json`) wins.
+- **Decision (user, 2026-06-13): Option 1.** It captures Quokka's cwd-anchored
+  resolution win without Quokka's full-trust posture and without writing into the
+  user's project, at the cost of a small temp-dir lifecycle. The OPEN analysis is
+  kept in full (not trimmed) so a future revisit has the context that produced
+  the call.
+- **Implementation (commit B):** `src/runner/stage.ts` copies the runner's
+  runtime closure (`main.ts` + `serialize.ts` — `protocol/*` is `import type`,
+  erased; same invariant that lets the package omit `protocol/`) into an
+  `os.tmpdir()` dir with no `package.json` ancestor, cached per process, cleaned
+  on exit. `session.ts` + `eval/run.mjs` spawn that staged path; `client.ts`
+  already sets `cwd=projectRoot` + `--node-modules-dir=manual` + `--sloppy-imports`
+  + `--allow-read=projectRoot`. `--sloppy-imports` is part of this landing: it
+  lets transitive PROJECT deps (real files Deno loads, not host-rewritten) use
+  extensionless/index specifiers, matching what the host resolver accepts for the
+  entry. Secondary fix: `resolveRequests` now maps unprefixed Node builtins
+  (`fs`) to `node:fs` (via `node:module` `isBuiltin`), not `npm:fs`. Verified:
+  `bare.ts` green (CJS `main` + ESM `exports`), full gate green.
+- **Revisit if:** the temp-dir assumption (no `package.json` above the OS temp
+  root) ever bites; or the data:-URL design is revisited wholesale (then Option 0
+  becomes attractive for resolution + stack-trace simplicity).
+- **References:**
+  - `denoland/deno#6694` — Quokka team's runtime requirements for Deno
+    (readFileSync duck-punch, process recycling, no compiler API → blocked):
+    https://github.com/denoland/deno/issues/6694
+  - `wallabyjs/quokka#456` — Deno support request (Quokka is Node-first):
+    https://github.com/wallabyjs/quokka/issues/456
+  - secure.software scan of `wallabyjs/quokka-vscode` — bundled-dependency CVEs,
+    rated SAFE, no sandbox-escape findings:
+    https://secure.software/vscode/packages/wallabyjs/quokka-vscode/vulnerabilities
+  - Precedent for cwd/root-anchored resolution:
+    - Node `NODE_PATH` + `require.resolve(req, { paths })`:
+      https://nodejs.org/api/modules.html
+    - `resolve-cwd` (`require.resolve(m, { paths: [process.cwd()] })`):
+      https://github.com/sindresorhus/resolve-cwd
+    - Jest `roots` / `moduleDirectories` / `modulePaths` (NODE_PATH analog):
+      https://jestjs.io/docs/configuration
+    - webpack `resolve.modules` from the context dir:
+      https://webpack.js.org/configuration/resolve/
+    - Deno node/npm resolution (nearest package.json, `nodeModulesDir`):
+      https://docs.deno.com/runtime/fundamentals/node/
+
 ## 2026-06-12 — Import rewriting moved from regex to the Oxc AST pass [RESOLVED]
 
 - **Context:** the Phase 6 v1 specifier rewrite was a regex over the generated

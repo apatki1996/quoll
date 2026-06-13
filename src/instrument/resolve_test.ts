@@ -39,14 +39,16 @@ Deno.test("collectDeps: transitive graph, cycle-safe, entry excluded", () => {
   );
 });
 
-Deno.test("resolveRequests: relative -> file://, bare -> npm:, scheme'd/unresolvable skipped", () => {
+Deno.test("resolveRequests: relative -> file://, builtin -> node:, bare -> npm:, scheme'd/unresolvable skipped", () => {
   const { rewrites, deps } = resolveRequests(
-    ["./util", "node:assert", "lodash", "@scope/pkg/sub", "./missing", "./lib", "/abs/path"],
+    ["./util", "node:assert", "fs", "fs/promises", "lodash", "@scope/pkg/sub", "./missing", "./lib", "/abs/path"],
     join(tmp, "main.ts"),
   );
   assert.deepEqual(rewrites, {
     "./util": pathToFileURL(join(tmp, "util.ts")).href,
     "./lib": pathToFileURL(join(tmp, "lib", "index.ts")).href,
+    "fs": "node:fs", // unprefixed Node builtin must become node:fs, not npm:fs
+    "fs/promises": "node:fs/promises",
     "lodash": "npm:lodash",
     "@scope/pkg/sub": "npm:@scope/pkg/sub",
   });

@@ -31,10 +31,13 @@ export type StartRunOpts = {
    * - `--allow-read=<root>`: file:// project imports are loadable (module
    *   loads from a data: entry need read permission). Read-only, never
    *   net/write/run — imported code can read the project but can't exfiltrate.
-   * - subprocess cwd: with `--node-modules-dir=manual`, npm: specifiers
-   *   resolve in THIS project's node_modules — local-only and deterministic
-   *   (without manual mode, Deno would fall back to its global npm cache and
-   *   even the network: wrong packages, silently).
+   * - subprocess cwd: with `--node-modules-dir=manual` AND a runner staged to a
+   *   neutral temp dir (no package.json ancestor — see stageRunner), Deno's
+   *   byonm falls back to cwd, so npm: specifiers resolve in THIS project's
+   *   node_modules — local-only and deterministic (without manual mode, Deno
+   *   would fall back to its global npm cache and even the network: wrong
+   *   packages, silently; without staging, byonm would anchor to the
+   *   extension's own package.json instead of the project).
    * Absent = deny-all (no imports).
    */
   projectRoot?: string;

@@ -5,6 +5,7 @@ import { prepareRun, type PreparedRun } from "./instrument/index.ts";
 import { Aggregator } from "./render/aggregate.ts";
 import { Renderer } from "./render/decorations.ts";
 import { startRun, type RunHandle } from "./runner/client.ts";
+import { stageRunner } from "./runner/stage.ts";
 
 /** Host-side outcome of a lazy expansion ("gone": runner process is dead). */
 export type ExpandOutcome =
@@ -102,7 +103,9 @@ export class QuollSession implements vscode.Disposable {
       dirname(this.doc.fileName);
     this.run = startRun({
       denoPath: config.get<string>("denoPath", "deno"),
-      runnerMain: `${this.extensionRoot}/runner/main.ts`,
+      // Staged to a neutral temp dir so byonm resolves the project's
+      // node_modules via cwd, not the extension's own (see stageRunner).
+      runnerMain: stageRunner(this.extensionRoot),
       runId,
       code: this.prepared.code,
       entry: this.doc.fileName,

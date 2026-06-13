@@ -1,6 +1,8 @@
 conversation*
 .DS_Store
 node_modules/
+# fixture packages for the golden bare-specifier case are real source, not deps
+!eval/cases/node_modules/
 dist/
 *.vsix
 crates/quoll-core/target/

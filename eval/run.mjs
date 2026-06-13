@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { Aggregator } from "../src/render/aggregate.ts";
 import { prepareRun } from "../src/instrument/index.ts";
 import { startRun } from "../src/runner/client.ts";
+import { stageRunner } from "../src/runner/stage.ts";
 
 // The harness runs the host's EXACT pipeline: prepareRun (instrument + import
 // resolution) AND startRun (the runner spawn, with its sandbox flags and
@@ -69,7 +70,7 @@ async function runCase(file) {
   const agg = new Aggregator(prepared.sites, (siteId) => prepared.toSourceLine(siteId));
   const run = startRun({
     denoPath: deno,
-    runnerMain: join(root, "runner", "main.ts"),
+    runnerMain: stageRunner(root),
     runId: 1,
     code: prepared.code,
     entry: file,

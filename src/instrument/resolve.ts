@@ -21,6 +21,7 @@
  * shared by both tiers.
  */
 import { readFileSync, statSync } from "node:fs";
+import { isBuiltin } from "node:module";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -64,7 +65,9 @@ const HAS_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 /**
  * Resolve the entry's module requests (from the native `listImports`).
  * - relative → absolute file:// URL (a data: entry can't resolve relative);
- * - bare → `npm:<spec>` (resolved by Deno in the PROJECT's node_modules:
+ * - bare Node builtin (`fs`, `path`, `fs/promises`) → `node:<spec>` — Deno
+ *   needs the explicit prefix, and `npm:fs` would just fail to resolve;
+ * - other bare → `npm:<spec>` (resolved by Deno in the PROJECT's node_modules:
  *   the runner gets `--node-modules-dir=manual` + cwd=projectRoot, which is
  *   what keeps this local-only — see StartRunOpts.projectRoot);
  * - scheme'd specifiers (node:, npm:, https:, …) pass through;
@@ -85,7 +88,7 @@ export function resolveRequests(
       rewrites[spec] = pathToFileURL(abs).href;
       deps.add(abs);
     } else if (!HAS_SCHEME.test(spec) && !spec.startsWith("/")) {
-      rewrites[spec] = `npm:${spec}`;
+      rewrites[spec] = isBuiltin(spec) ? `node:${spec}` : `npm:${spec}`;
     }
   }
   return { rewrites, deps: [...deps] };

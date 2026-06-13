@@ -1,0 +1,9 @@
+{
+  "name": "quoll-eval-cases",
+  "private": true,
+  "//": "Marks the byonm root for the bare.ts golden case: --node-modules-dir=manual resolves npm: specifiers from the nearest package.json's node_modules (the checked-in fixture packages).",
+  "dependencies": {
+    "quoll-cjs-greeter": "1.0.0",
+    "quoll-esm-math": "1.0.0"
+  }
+}
