@@ -34,10 +34,15 @@ export function loadNative(extensionRoot: string): NativeBinding | null {
   if (cached !== undefined) return cached;
   const file = `${extensionRoot}/native/quoll-core.${process.platform}-${process.arch}.node`;
   try {
-    // import.meta.url (not __filename) so this module loads under BOTH the
-    // esbuild CJS bundle (live host) and node-ESM type-strip (eval harness) —
-    // letting both share prepareRun instead of duplicating the pipeline.
-    const require = createRequire(import.meta.url);
+    // `file` is ABSOLUTE, so createRequire's base only needs to be a valid path,
+    // not a meaningful one. Use process.execPath rather than import.meta.url:
+    // esbuild stubs import.meta to `{}` in the CJS bundle (the shipped extension),
+    // so import.meta.url is undefined there and createRequire(undefined) THROWS —
+    // which this catch would swallow, silently dropping every run to the identity
+    // fallback (no instrumentation, bare specifiers left unresolved). process.execPath
+    // is a real absolute path under BOTH the CJS bundle (live host) and the node-ESM
+    // type-strip (eval harness), so both share the real prepareRun pipeline.
+    const require = createRequire(process.execPath);
     cached = require(file) as NativeBinding;
   } catch {
     cached = null; // no binary for this platform — caller falls back to identity

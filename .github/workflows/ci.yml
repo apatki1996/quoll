@@ -56,6 +56,13 @@ jobs:
       - name: Build extension
         run: pnpm run build
 
+      # Guards the source/bundle fidelity gap: the eval harness imports the TS
+      # under node-ESM (import.meta.url defined), but the shipped extension runs
+      # the esbuild CJS bundle (import.meta stubbed). Asserts the napi binary
+      # still loads from the bundled form, so a run never silently degrades.
+      - name: Native-bundle check
+        run: pnpm run check:bundle
+
       - name: Golden-eval harness
         run: pnpm run eval
 

@@ -91,6 +91,7 @@
     "build:core": "node scripts/build-core.mjs",
     "check:phase3": "node scripts/phase3-check.mjs",
     "check:phase5": "node scripts/phase5-check.mjs",
+    "check:bundle": "node scripts/check-native-bundle.mjs",
     "eval": "node eval/run.mjs",
     "fmt": "oxfmt && cargo fmt --manifest-path crates/quoll-core/Cargo.toml",
     "fmt:check": "oxfmt --check && cargo fmt --manifest-path crates/quoll-core/Cargo.toml --check"
