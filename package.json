@@ -81,8 +81,13 @@
   "scripts": {
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
+    "package": "pnpm run typecheck && node esbuild.mjs --production",
     "typecheck": "tsc --noEmit",
-    "vscode:prepublish": "pnpm run build:core && pnpm run build",
+    "typecheck:tests": "tsc --noEmit -p tsconfig.test.json",
+    "build:tests": "node esbuild.mjs --test",
+    "pretest": "pnpm run typecheck:tests && pnpm run build && pnpm run build:tests",
+    "test": "vscode-test",
+    "vscode:prepublish": "pnpm run build:core && pnpm run package",
     "build:core": "node scripts/build-core.mjs",
     "check:phase3": "node scripts/phase3-check.mjs",
     "check:phase5": "node scripts/phase5-check.mjs",
@@ -91,8 +96,11 @@
     "fmt:check": "oxfmt --check && cargo fmt --manifest-path crates/quoll-core/Cargo.toml --check"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.10",
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.96.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^3.0.0",
     "esbuild": "^0.25.0",
     "oxfmt": "^0.54.0",
     "typescript": "^5.5.0"

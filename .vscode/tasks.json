@@ -5,7 +5,14 @@
       "label": "quoll: build",
       "type": "shell",
       "command": "node esbuild.mjs",
-      "problemMatcher": [],
+      "problemMatcher": ["$esbuild"],
+      "group": "build"
+    },
+    {
+      "label": "quoll: build tests",
+      "type": "shell",
+      "command": "node esbuild.mjs --test",
+      "problemMatcher": ["$esbuild"],
       "group": "build"
     }
   ]

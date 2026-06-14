@@ -4,6 +4,8 @@ node_modules/
 # fixture packages for the golden bare-specifier case are real source, not deps
 !eval/cases/node_modules/
 dist/
+out/
+.vscode-test/
 *.vsix
 crates/quoll-core/target/
 native/

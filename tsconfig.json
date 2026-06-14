@@ -13,5 +13,5 @@
     "skipLibCheck": true
   },
   "include": ["src", "protocol"],
-  "exclude": ["**/*_test.ts"]
+  "exclude": ["**/*_test.ts", "src/test"]
 }

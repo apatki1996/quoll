@@ -58,3 +58,33 @@ jobs:
 
       - name: Golden-eval harness
         run: pnpm run eval
+
+  # Smoke + glue tests in a real VS Code instance (@vscode/test-electron). These
+  # exercise only the extension-host wiring (activation, commands, view, config)
+  # — the instrument/runner paths fall back gracefully, so this job needs
+  # neither Rust nor Deno, which is why the matrix can stay lean.
+  vscode-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # pretest builds the extension + the test bundle and typechecks the suite.
+      # On Linux the VS Code Electron instance needs a virtual display.
+      - name: Test (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm test
+      - name: Test (macOS/Windows)
+        if: runner.os != 'Linux'
+        run: pnpm test

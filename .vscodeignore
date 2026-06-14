@@ -7,6 +7,10 @@ mise.toml
 node_modules/**
 esbuild.mjs
 tsconfig.json
+tsconfig.test.json
+.vscode-test.mjs
+.vscode-test/**
+out/**
 pnpm-lock.yaml
 pnpm-workspace.yaml
 **/*.map
