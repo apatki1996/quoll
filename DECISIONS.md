@@ -49,7 +49,10 @@ future regression fails a test, not just memory.
      persisted to **Global (user)** settings — the only scope `machine` allows.
      A missing Deno raises an **actionable** `showErrorMessage` (Locate Deno… /
      Open Settings / Install Deno) at Start instead of silent empty output
-     (`ensureDeno` in `src/extension.ts`).
+     (`resolveDenoPath` + `promptForDeno` in `src/extension.ts`). The prompt is
+     fire-and-forget: the Start command opens the editor and returns without
+     awaiting it (awaiting a notification would hang a headless host — caught by
+     the VS Code integration test timing out).
 - **Aggressive probing here is safe** precisely because it only runs on the
   user's machine with their privileges (threat-model A territory — not an
   escalation). The dangerous, workspace-influenced path is closed off separately
