@@ -17,6 +17,60 @@ future regression fails a test, not just memory.
 
 ---
 
+## 2026-06-14 — Sandbox trust root: `denoPath` is `machine`-scoped + auto-resolved [DECIDED]
+
+- **Context:** the deny-all Deno sandbox (see the 2026-06-12 sandbox-model entry)
+  only holds if the binary at `quoll.denoPath` is *honest Deno* — Quoll merely
+  passes permission flags; the binary enforces them. So the whole security model
+  reduces to "who chooses that binary." Two threat models fall out:
+  - **A — attacker already on the user's machine** (can plant a fake `deno`,
+    edit PATH or *user* settings): not Quoll's problem. They already have code
+    execution as the user; no tool that shells out to an external binary can
+    defend against its own enforcement binary being swapped. Out of scope.
+  - **B — a cloned/hostile repo chooses the binary for you:** the real vector.
+    `vscode.workspace.getConfiguration("quoll").get("denoPath")` reads the
+    *merged* config, which includes the workspace's **committed**
+    `.vscode/settings.json`. A repo could ship `"quoll.denoPath": "./evil"` and,
+    on **Quoll: Start**, have the extension spawn an attacker binary with the
+    user's privileges — defeating the sandbox before it exists.
+- **Decision (two layers):**
+  1. **`quoll.denoPath` is `scope: "machine"`** (`package.json`) — settable only
+     in user/remote settings; a workspace `.vscode/settings.json` is hard-refused
+     by VS Code ("This setting can only be applied in user settings…"). This is
+     defense-in-depth *behind* Workspace Trust (Quoll declares no
+     `capabilities.untrustedWorkspaces`, so it stays disabled until the user
+     trusts the folder).
+  2. **Auto-resolve the binary on the user's own machine** (`src/runner/deno.ts`,
+     vscode-free + unit-tested): probe PATH → `~/.deno/bin` → mise shim →
+     Homebrew → then ask the **login shell** (`$SHELL -lic 'command -v deno'`).
+     The login-shell step fixes the common macOS case where a GUI-launched VS
+     Code never inherited the shell PATH (mise/asdf users have a working `deno`
+     in their terminal but not on the app's PATH). An auto-detected path is
+     persisted to **Global (user)** settings — the only scope `machine` allows.
+     A missing Deno raises an **actionable** `showErrorMessage` (Locate Deno… /
+     Open Settings / Install Deno) at Start instead of silent empty output
+     (`ensureDeno` in `src/extension.ts`).
+- **Aggressive probing here is safe** precisely because it only runs on the
+  user's machine with their privileges (threat-model A territory — not an
+  escalation). The dangerous, workspace-influenced path is closed off separately
+  by the `machine` scope.
+- **Rejected:**
+  - **`machine-overridable` scope** — the name misleads: it *explicitly allows*
+    workspace/folder override, so it does NOT close threat-model B. Verified live
+    — a `machine-overridable` `denoPath` showed "(Also modified in Workspace)" in
+    the settings UI, i.e. the workspace value was still honored. `machine` is the
+    correct scope for an executable path.
+  - **Leaving the bare `"deno"` default with no detection** — silent failure for
+    every GUI-PATH / marketplace user (empty output, error buried in the hidden
+    output channel). The whole point is to never present silence.
+  - **Filtering/inspecting user code for malicious intent in the Rust core** —
+    a losing game (static "is this bad?" detection) and the wrong layer. All
+    security stays in the capability sandbox; the instrumenter rewrites code
+    faithfully, malicious parts included.
+- **Revisit if:** we add any other executable-path setting (apply the same
+  `machine` scope + auto-resolve pattern), or remote-dev surfaces a case where
+  the per-machine binary needs a different resolution than the login-shell probe.
+
 ## 2026-06-12 — Phase 6 bare specifiers: how to anchor npm resolution [DECIDED 2026-06-13 — Option 1]
 
 - **Context:** relative project imports work (rewritten to absolute `file://`),
