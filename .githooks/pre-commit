@@ -1,0 +1,32 @@
+#!/bin/sh
+# Pre-commit gate: the FAST checks only — lint + format. Heavier gates
+# (clippy, typecheck, eval) run in CI; see .github/workflows/ci.yml.
+#
+# Runs whole-tree (not just staged files) but is gated on staged file TYPES,
+# so a Rust-only commit never waits on the JS toolchain and vice versa. The
+# checks are check-only: they block rather than rewrite your tree.
+#
+# Installed by the `prepare` npm script (git config core.hooksPath .githooks).
+# Bypass a single commit with: git commit --no-verify
+set -e
+
+files=$(git diff --cached --name-only --diff-filter=ACM)
+
+fail() {
+  echo "" >&2
+  echo "✗ pre-commit failed — fix with: pnpm fmt && pnpm lint:fix" >&2
+  echo "  (or bypass once with: git commit --no-verify)" >&2
+  exit 1
+}
+trap fail EXIT
+
+if echo "$files" | grep -qE '\.(ts|mjs|js)$'; then
+  pnpm run lint
+  pnpm exec oxfmt --check
+fi
+
+if echo "$files" | grep -qE '\.rs$'; then
+  cargo fmt --manifest-path crates/quoll-core/Cargo.toml --check
+fi
+
+trap - EXIT

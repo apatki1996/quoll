@@ -51,8 +51,8 @@ export class QuollSession implements vscode.Disposable {
       // SAVE (disk is fresh then). Re-running on the unsaved buffer change
       // would read stale disk content and lag one value behind. (The active
       // file is read from the editor buffer via getText(), so it's live on type.)
-      vscode.workspace.onDidSaveTextDocument((doc) => {
-        if (this.deps.has(doc.fileName)) this.scheduleRun();
+      vscode.workspace.onDidSaveTextDocument((saved) => {
+        if (this.deps.has(saved.fileName)) this.scheduleRun();
       }),
       vscode.window.onDidChangeVisibleTextEditors(() => this.renderer.reapply()),
     );

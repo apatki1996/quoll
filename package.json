@@ -79,6 +79,7 @@
     }
   },
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "package": "pnpm run typecheck && node esbuild.mjs --production",
@@ -94,7 +95,10 @@
     "check:bundle": "node scripts/check-native-bundle.mjs",
     "eval": "node eval/run.mjs",
     "fmt": "oxfmt && cargo fmt --manifest-path crates/quoll-core/Cargo.toml",
-    "fmt:check": "oxfmt --check && cargo fmt --manifest-path crates/quoll-core/Cargo.toml --check"
+    "fmt:check": "oxfmt --check && cargo fmt --manifest-path crates/quoll-core/Cargo.toml --check",
+    "lint": "oxlint --deny-warnings",
+    "lint:fix": "oxlint --fix",
+    "lint:rust": "cargo clippy --manifest-path crates/quoll-core/Cargo.toml --all-targets -- -D warnings"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -104,6 +108,7 @@
     "@vscode/test-electron": "^3.0.0",
     "esbuild": "^0.25.0",
     "oxfmt": "^0.54.0",
+    "oxlint": "^1.69.0",
     "typescript": "^5.5.0"
   },
   "packageManager": "pnpm@11.5.2"

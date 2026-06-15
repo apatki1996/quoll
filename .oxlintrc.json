@@ -1,0 +1,45 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "warn"
+  },
+  "rules": {
+    "eqeqeq": "error",
+    "import/no-cycle": "error",
+    "typescript/no-explicit-any": "warn",
+    "typescript/consistent-type-imports": "off",
+
+    // Target/lib is ES2022; `Array#toSorted` is ES2023 and not in the lib, so
+    // pushing it would break typecheck. Mutating `sort()` is fine in our usage.
+    "unicorn/no-array-sort": "off",
+    // The runner awaits ordered protocol messages sequentially on purpose;
+    // parallelizing would reorder captures. Sequential await is the design.
+    "no-await-in-loop": "off",
+    // `__quoll` is the deliberately-namespaced global the runner injects into
+    // user code; the dangling underscores are the convention, not a slip.
+    "no-underscore-dangle": "off"
+  },
+  "ignorePatterns": [
+    "dist/**",
+    "out/**",
+    "native/**",
+    ".vscode-test/**",
+    "crates/**",
+    "**/*.d.ts",
+    // Golden-eval FIXTURES: deliberately "wrong" code (unreachable branches,
+    // constant conditions, useless concats) is the test input, and the harness
+    // parses these by line number. Linting them is noise. Mirrors .oxfmtrc.jsonc.
+    "eval/cases/**"
+  ],
+  "overrides": [
+    {
+      "files": ["**/*_test.ts", "**/*.test.ts", "src/test/**", "**/*.mjs"],
+      "rules": {
+        "typescript/no-explicit-any": "off"
+      }
+    }
+  ]
+}

@@ -73,13 +73,22 @@ A change should pass the same checks CI runs (`.github/workflows/ci.yml`):
 
 ```sh
 pnpm run fmt:check    # oxfmt (JS/TS) + cargo fmt --check (Rust)
+pnpm run lint         # oxlint (JS/TS), fails on any warning
+pnpm run lint:rust    # cargo clippy (Rust), fails on any warning
 pnpm run build:core   # native instrumentation core
 pnpm run typecheck    # tsc --noEmit
 pnpm run build        # esbuild bundle
 pnpm run eval         # golden-eval harness
 ```
 
-`pnpm run fmt` auto-formats if `fmt:check` fails.
+`pnpm run fmt` auto-formats if `fmt:check` fails; `pnpm run lint:fix` applies
+oxlint's safe autofixes.
+
+A **pre-commit hook** runs the fast subset (lint + format, gated on the file
+types you staged) before each commit. It's installed automatically on
+`pnpm install` via the `prepare` script (`git config core.hooksPath .githooks`),
+so there's nothing to set up. Bypass a single commit with `git commit
+--no-verify`. The heavier gates (clippy, typecheck, eval) stay in CI.
 
 ## Pull requests
 

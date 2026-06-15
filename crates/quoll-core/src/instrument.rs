@@ -197,10 +197,10 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
         self.ensure_block(&mut if_stmt.consequent);
         // `else if` stays as-is (block-wrapping it would renest the chain);
         // the nested IfStatement normalizes its own arms.
-        if let Some(alternate) = &mut if_stmt.alternate {
-            if !matches!(alternate, Statement::IfStatement(_)) {
-                self.ensure_block(alternate);
-            }
+        if let Some(alternate) = &mut if_stmt.alternate
+            && !matches!(alternate, Statement::IfStatement(_))
+        {
+            self.ensure_block(alternate);
         }
         walk_mut::walk_if_statement(self, if_stmt);
     }

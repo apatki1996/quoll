@@ -19,6 +19,8 @@ jobs:
       # The instrumentation core is a Rust cdylib (edition 2024 -> needs a
       # recent stable). rust-cache keys on crates/quoll-core/Cargo.lock.
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: crates/quoll-core
@@ -43,6 +45,13 @@ jobs:
       # the slower build/eval steps. rustfmt ships with rust-toolchain@stable.
       - name: Format check
         run: pnpm run fmt:check
+
+      # Lint gate: oxlint (JS/TS, --deny-warnings) + clippy (Rust, -D warnings).
+      # Both fail on any warning so the gate can't quietly accumulate debt.
+      - name: Lint (oxlint)
+        run: pnpm run lint
+      - name: Lint (clippy)
+        run: pnpm run lint:rust
 
       # cargo build --release -> native/quoll-core.linux-x64.node (loaded by the
       # instrument pipeline; the eval harness silently falls back to identity if
