@@ -68,7 +68,8 @@
         "quoll.denoPath": {
           "type": "string",
           "default": "deno",
-          "description": "Path to the Deno executable used for the runner sandbox."
+          "scope": "machine",
+          "description": "Path to the Deno executable used for the runner sandbox. Machine-scoped: settable only in user or remote settings — a workspace's .vscode/settings.json cannot override it, so a cloned repo can never redirect the sandbox binary."
         },
         "quoll.debounceMs": {
           "type": "number",

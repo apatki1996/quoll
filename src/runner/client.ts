@@ -61,10 +61,15 @@ export function startRun(opts: StartRunOpts): RunHandle {
     cwd: opts.projectRoot,
   });
 
-  child.on("error", (err) => {
+  child.on("error", (err: NodeJS.ErrnoException) => {
+    // ENOENT = the denoPath binary doesn't exist (vs. a real spawn failure).
+    // The Start-time probe (ensureDeno) is the primary guard with an actionable
+    // prompt; this only fires if the binary vanishes mid-session, so a clear
+    // output-channel line is enough.
     opts.onDiagnostic(
-      `failed to spawn runner (${opts.denoPath}): ${err.message}. ` +
-        `Install Deno or set ${EXTENSION_ID}.denoPath.`,
+      err.code === "ENOENT"
+        ? `Deno not found at "${opts.denoPath}". Set ${EXTENSION_ID}.denoPath or install Deno.`
+        : `failed to spawn runner (${opts.denoPath}): ${err.message}.`,
     );
   });
   // A failed spawn (ENOENT) destroys the stdio streams with an error; without
