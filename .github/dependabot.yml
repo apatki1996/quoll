@@ -1,0 +1,41 @@
+version: 2
+updates:
+  # JS/TS toolchain — root package.json + pnpm-lock.yaml.
+  # Scoped to "/" so the eval/cases fixture package.json is left untouched.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Rust native addon — crates/quoll-core.
+  - package-ecosystem: "cargo"
+    directory: "/crates/quoll-core"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      # oxc_* crates lockstep on the same version; bump them together.
+      oxc:
+        patterns:
+          - "oxc*"
+      cargo-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions used in .github/workflows.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"
