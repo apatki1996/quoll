@@ -17,8 +17,25 @@ export interface SiteInfo {
   kind: string;
 }
 
+/**
+ * Inline value-render policy (Phase 8). `all` = Quoll's always-on default
+ * (every captured expression renders). `comments` = quiet mode: only sites the
+ * user opted into (`//?`, value-on-selection, logpoints) render inline;
+ * console output and `//?.` timings always render. Coverage and the explorer
+ * are unaffected.
+ */
+export type ValuesMode = "all" | "comments";
+
+/** Site kinds whose inline value survives quiet mode (user opted in). */
+const OPT_IN_KINDS = new Set(["comment", "selection", "logpoint"]);
+
 /** Per-site / per-line cap so a hot loop can't grow render state unbounded. */
 const MAX_VALUES = 100;
+
+/** `//?.` timing: sub-ms gets 2 decimals, otherwise whole milliseconds. */
+function formatDuration(ms: number): string {
+  return ms >= 1 ? `${Math.round(ms)}ms` : `${ms.toFixed(2)}ms`;
+}
 
 export class Aggregator {
   /** value captures keyed by siteId, so a single evolving value (a settling
@@ -26,6 +43,8 @@ export class Aggregator {
   private readonly siteValues = new Map<number, { line: number; values: RemoteValue[] }>();
   /** console output, line-keyed (it isn't site-attributed). */
   private readonly consoleValues = new Map<number, string[]>();
+  /** `//?.` timings keyed by siteId; the latest run's duration per site. */
+  private readonly perfs = new Map<number, number>();
   private readonly coverHits = new Map<number, number>();
   private readonly errs = new Map<number, string>();
 
@@ -34,13 +53,16 @@ export class Aggregator {
   // assignments parameter properties require.
   private readonly sites: ReadonlyMap<number, SiteInfo>;
   private readonly genToSource: (siteId: number | undefined) => number | undefined;
+  private readonly valuesMode: ValuesMode;
 
   constructor(
     sites: ReadonlyMap<number, SiteInfo>,
     genToSource: (siteId: number | undefined) => number | undefined,
+    valuesMode: ValuesMode = "all",
   ) {
     this.sites = sites;
     this.genToSource = genToSource;
+    this.valuesMode = valuesMode;
   }
 
   ingest(msg: RunnerEvent): void {
@@ -66,6 +88,9 @@ export class Aggregator {
         this.consoleValues.set(line, list);
         return;
       }
+      case "perf":
+        this.perfs.set(msg.siteId, msg.durationMs);
+        return;
       case "cover":
         this.coverHits.set(msg.siteId, msg.hits);
         return;
@@ -75,12 +100,14 @@ export class Aggregator {
         return;
       }
       default:
-        return; // done / exit / expandResult / perf carry no render state
+        return; // done / exit / expandResult carry no render state
     }
   }
 
-  /** Value + console previews per source line (value sites in capture order,
-   * then console), ready to join into one end-of-line decoration. */
+  /** Value + perf + console previews per source line (value sites in capture
+   * order, then perf timings, then console), ready to join into one
+   * end-of-line decoration. In `comments` mode, only opt-in value sites
+   * render; perf and console always do. */
   lineValues(): Map<number, string[]> {
     const byLine = new Map<number, string[]>();
     const push = (line: number, preview: string) => {
@@ -88,8 +115,15 @@ export class Aggregator {
       list.push(preview);
       byLine.set(line, list);
     };
-    for (const { line, values } of this.siteValues.values()) {
+    for (const [siteId, { line, values }] of this.siteValues) {
+      if (this.valuesMode === "comments" && !OPT_IN_KINDS.has(this.sites.get(siteId)?.kind ?? "")) {
+        continue; // quiet mode: drop auto-captured expressions
+      }
       for (const v of values) push(line, v.preview);
+    }
+    for (const [siteId, ms] of this.perfs) {
+      const line = this.sites.get(siteId)?.line;
+      if (line !== undefined) push(line, `⏱ ${formatDuration(ms)}`);
     }
     for (const [line, previews] of this.consoleValues) {
       for (const p of previews) push(line, p);

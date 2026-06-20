@@ -75,6 +75,19 @@
           "type": "number",
           "default": 300,
           "description": "Delay after the last edit before re-running the file."
+        },
+        "quoll.values": {
+          "type": "string",
+          "enum": [
+            "all",
+            "comments"
+          ],
+          "enumDescriptions": [
+            "Always-on: show the value of every expression inline.",
+            "Quiet: show inline values only on lines you opt into with a //? comment. //?. timings and console output still show."
+          ],
+          "default": "all",
+          "description": "Which inline runtime values to show. 'all' is Quoll's always-on default; 'comments' shows only //?-annotated lines."
         }
       }
     }

@@ -2,6 +2,7 @@ import { dirname } from "node:path";
 import * as vscode from "vscode";
 import type { RemoteValue, RunnerMsg } from "../protocol/index.ts";
 import { config } from "./configuration.ts";
+import { EXTENSION_ID } from "./constants.ts";
 import { prepareRun, type PreparedRun } from "./instrument/index.ts";
 import { Aggregator } from "./render/aggregate.ts";
 import { Renderer } from "./render/decorations.ts";
@@ -55,6 +56,11 @@ export class QuollSession implements vscode.Disposable {
         if (this.deps.has(saved.fileName)) this.scheduleRun();
       }),
       vscode.window.onDidChangeVisibleTextEditors(() => this.renderer.reapply()),
+      // The values mode is read when the Aggregator is built, so a re-run
+      // re-folds the current stream under the new policy.
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration(`${EXTENSION_ID}.values`)) this.scheduleRun();
+      }),
     );
     this.runNow();
   }
@@ -76,8 +82,10 @@ export class QuollSession implements vscode.Disposable {
       },
       this.extensionRoot,
     );
-    this.agg = new Aggregator(this.prepared.sites, (id) =>
-      id === undefined ? undefined : this.prepared?.toSourceLine(id),
+    this.agg = new Aggregator(
+      this.prepared.sites,
+      (id) => (id === undefined ? undefined : this.prepared?.toSourceLine(id)),
+      config.values(),
     );
     this.deps = new Set(this.prepared.deps); // refresh the watch graph each run
     this.failPendingExpands();
