@@ -8,11 +8,12 @@
 mod imports;
 mod instrument;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use napi_derive::napi;
 use oxc_allocator::Allocator;
+use oxc_ast::ast::Comment;
 use oxc_ast_visit::{Visit, VisitMut};
 use oxc_codegen::{Codegen, CodegenOptions};
 use oxc_parser::Parser;
@@ -41,7 +42,8 @@ pub struct NapiCaptureSite {
     pub column: u32,
     pub end_line: u32,
     pub end_column: u32,
-    /// "expr" | "statement" | "branch" (see protocol CaptureSiteKind).
+    /// "expr" | "statement" | "branch" | "comment" | "perf"
+    /// (see protocol CaptureSiteKind).
     pub kind: String,
 }
 
@@ -82,6 +84,32 @@ pub fn list_imports(source: String, filename: String, jsx: bool) -> Vec<String> 
     let mut collector = RequestCollector::default();
     collector.visit_program(&parser_ret.program);
     collector.requests
+}
+
+/// Phase 8 live comments: classify trailing line comments by the source line
+/// they sit on. `//?.` → perf timing, `//?` → value comment. Strict on the
+/// char immediately after `//` (must be `?`) so `// ? prose` never matches.
+/// Collected from the parsed comments BEFORE the AST is moved into transform.
+fn collect_annotations(source: &str, comments: &[Comment]) -> (HashSet<u32>, HashSet<u32>) {
+    let mut perf = HashSet::new();
+    let mut comment = HashSet::new();
+    for c in comments {
+        if !c.is_line() {
+            continue;
+        }
+        let span = c.content_span();
+        let text = &source[span.start as usize..span.end as usize];
+        let Some(rest) = text.strip_prefix('?') else {
+            continue;
+        };
+        let line = offset_to_line(source, c.span.start);
+        if rest.starts_with('.') {
+            perf.insert(line);
+        } else {
+            comment.insert(line);
+        }
+    }
+    (perf, comment)
 }
 
 fn offset_to_line(source: &str, offset: u32) -> u32 {
@@ -138,6 +166,11 @@ pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
     }
     let mut program = parser_ret.program;
 
+    // Phase 8: read `//?` / `//?.` annotations from the parsed comments now,
+    // before the transformer consumes the AST. Lines are original-source, which
+    // is the same coordinate space the Instrumenter tags sites in.
+    let (perf_lines, comment_lines) = collect_annotations(&source, &program.comments);
+
     let scoping = SemanticBuilder::new()
         .build(&program)
         .semantic
@@ -170,7 +203,7 @@ pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
 
     // Phase 4: inject value-capture + coverage into the SAME AST before the
     // single codegen — no second pass, no source-map composition.
-    let mut instrumenter = Instrumenter::new(&allocator, &source);
+    let mut instrumenter = Instrumenter::new(&allocator, &source, perf_lines, comment_lines);
     instrumenter.visit_program(&mut program);
 
     let codegen_ret = Codegen::new()
