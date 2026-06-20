@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Live comments** — annotate a line with `//?` to mark its value as an
+  explicit "show me this" (Phase 8). Pairs with the new `quoll.values` setting:
+  set it to `comments` for a quiet mode that shows inline values only on
+  `//?` lines, leaving the rest uncluttered.
+- **Perf timing** — `//?.` on a line times its execution and renders `⏱ <n>ms`
+  inline instead of the value.
+
 ## [0.0.1] - 2026-06-13
 
 Initial development release: single-file JS/TS scratchpads that run as you type.

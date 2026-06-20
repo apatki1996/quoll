@@ -6,6 +6,7 @@
 //                              (catches noise/surplus a substring check misses)
 //   //~ covered|uncovered|partial   line's coverage gutter state
 //   //! <text>                 line must show an error containing <text>
+//   //@values all|comments     file-level: render mode for the Aggregator
 //
 // The harness runs the REAL pipeline: native instrument -> Deno runner ->
 // protocol messages -> line attribution, then diffs against expectations.
@@ -67,7 +68,8 @@ async function runCase(file) {
   // the source map. The harness tests the exact attribution + aggregation the
   // editor uses. projectRoot mirrors the host's loose-file rule: the case's
   // own directory (which also holds the fixtures and fixture node_modules).
-  const agg = new Aggregator(prepared.sites, (siteId) => prepared.toSourceLine(siteId));
+  const valuesMode = /\/\/@values\s+(all|comments)/.exec(source)?.[1] ?? "all";
+  const agg = new Aggregator(prepared.sites, (siteId) => prepared.toSourceLine(siteId), valuesMode);
   const run = startRun({
     denoPath: deno,
     runnerMain: stageRunner(root),
