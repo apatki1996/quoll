@@ -184,6 +184,19 @@ function installQuollRuntime(): void {
     cover(siteId: number): void {
       coverHits.set(siteId, (coverHits.get(siteId) ?? 0) + 1);
     },
+    // `//?.` timing (Phase 8): time the deferred thunk and report durationMs.
+    // The value is returned unchanged so program semantics are preserved; a
+    // throw still propagates (the `finally` reports the partial time). Only the
+    // SYNCHRONOUS evaluation is timed — an async expr's later work isn't, which
+    // matches the sync capture model.
+    perf(siteId: number, thunk: () => unknown): unknown {
+      const start = performance.now();
+      try {
+        return thunk();
+      } finally {
+        send({ t: "perf", siteId, durationMs: performance.now() - start });
+      }
+    },
   };
 }
 

@@ -17,6 +17,54 @@ future regression fails a test, not just memory.
 
 ---
 
+## 2026-06-19 — Phase 8 live comments: `//?`, `//?.`, and quiet mode [DECIDED]
+
+- **Context:** Phase 8's first slice. Quokka's `//?` shows a line's value and
+  `//?.` shows its execution time. Quoll is already always-on (every expression
+  renders), so the open question was what `//?` *adds* here, and how to time a
+  line honestly.
+- **Decision:**
+  - **Comment extraction lives in the Oxc pass, not a host regex.** The parser
+    already exposes `program.comments` with original-source spans; we read them
+    in `lib.rs` (`collect_annotations`) BEFORE the transformer consumes the AST,
+    so comment lines are in the same coordinate space the Instrumenter tags
+    sites in. Strict match: the char immediately after `//` must be `?` (so
+    `// ? prose` never triggers); `?.` → perf, `?` → comment. This reuses the
+    Phase-6 lesson (import rewriting moved regex→AST) — never pattern-match
+    Quoll semantics over generated text.
+  - **`//?` re-tags the site `kind: "comment"`; it does not change capture.**
+    Under always-on it renders identically to `expr`. Its real job is to be the
+    opt-in marker for **quiet mode** (new `quoll.values: "all" | "comments"`
+    setting). In `comments` mode the host filters inline values to opt-in kinds
+    (`comment`/`selection`/`logpoint`); console and `//?.` timings still show;
+    coverage and the explorer are untouched. This is the render-time FILTER the
+    always-on entry (2026-06-12) promised, now delivered.
+  - **`//?.` emits a `perf` site that wraps the expression in a thunk**
+    (`__quoll.perf(id, () => expr)`). A call argument evaluates eagerly, so the
+    expression must be DEFERRED or there'd be nothing left to time. The runner
+    times the thunk call and emits the existing `perf` protocol message; the
+    line renders `⏱ <n>ms` instead of the value. Only the SYNCHRONOUS evaluation
+    is timed — consistent with the sync capture model.
+- **No protocol change:** `perf` and the `comment`/`perf` kinds were already in
+  the frozen interface (the `kind`/`extraSites` pre-payment). Another validation
+  of the upfront design — Phase 8 was frontend/core work, not a protocol break.
+- **Rejected:**
+  - *Host-regex comment detection* — corrupts strings containing `//?`-shaped
+    text and drifts from the AST (same failure the import rewrite hit).
+  - *Timing the value eagerly* (`__quoll.perf(id, expr)`) — the expr is already
+    evaluated by the time perf runs; nothing to measure. The thunk is required.
+  - *Making `//?` a distinct capture path* — needless; it's the same value
+    capture with a kind tag, which is exactly what quiet-mode filtering needs.
+- **Golden cases:** `perf.ts` (asserts the `⏱` marker, not the non-deterministic
+  duration) and `comments.ts` (quiet mode via a new `//@values comments` harness
+  directive: opt-in line shows, auto line suppressed, coverage still works).
+- **Deferred to the next slice:** value-on-selection + Logpoints, both via
+  `InstrumentOpts.extraSites` (declared in the protocol, not yet produced by the
+  core) — they share the extraSites plumbing and a command surface.
+- **Revisit if:** multi-line expressions need annotation attachment beyond the
+  start/end-line match used here; or quiet mode wants per-file/inline control
+  rather than a workspace setting.
+
 ## 2026-06-14 — Sandbox trust root: `denoPath` is `machine`-scoped + auto-resolved [DECIDED]
 
 - **Context:** the deny-all Deno sandbox (see the 2026-06-12 sandbox-model entry)

@@ -15,6 +15,8 @@
 //! wraps/precedes. Empty (0,0) spans would emit source-map segments pointing
 //! at line 1 and corrupt line attribution for anything sharing the line.
 
+use std::collections::HashSet;
+
 use oxc_allocator::{Allocator, Vec as ArenaVec};
 use oxc_ast::ast::*;
 use oxc_ast::{AstBuilder, NONE};
@@ -35,10 +37,19 @@ pub struct Instrumenter<'a> {
     ast: AstBuilder<'a>,
     line_starts: Vec<u32>,
     pub sites: Vec<SiteRec>,
+    /// Source lines carrying a `//?.` perf annotation (Phase 8 live comments).
+    perf_lines: HashSet<u32>,
+    /// Source lines carrying a `//?` value-comment annotation.
+    comment_lines: HashSet<u32>,
 }
 
 impl<'a> Instrumenter<'a> {
-    pub fn new(allocator: &'a Allocator, source: &str) -> Self {
+    pub fn new(
+        allocator: &'a Allocator,
+        source: &str,
+        perf_lines: HashSet<u32>,
+        comment_lines: HashSet<u32>,
+    ) -> Self {
         let mut line_starts = vec![0u32];
         for (i, b) in source.bytes().enumerate() {
             if b == b'\n' {
@@ -49,6 +60,8 @@ impl<'a> Instrumenter<'a> {
             ast: AstBuilder::new(allocator),
             line_starts,
             sites: Vec::new(),
+            perf_lines,
+            comment_lines,
         }
     }
 
@@ -107,12 +120,58 @@ impl<'a> Instrumenter<'a> {
         self.ast.expression_call(span, callee, NONE, args, false)
     }
 
-    /// expr → `__quoll.log(id, expr)`
+    /// Annotation kind for an expression, by the source line(s) it spans.
+    /// A `//?.` / `//?` trails the expression's last line, but allow either
+    /// boundary so a single-line expr matches regardless. `//?.` wins over
+    /// `//?` (it's the more specific, perf, intent).
+    fn annotation_for(&self, span: Span) -> Option<&'static str> {
+        let (start_line, _) = self.pos(span.start);
+        let (end_line, _) = self.pos(span.end);
+        if self.perf_lines.contains(&end_line) || self.perf_lines.contains(&start_line) {
+            Some("perf")
+        } else if self.comment_lines.contains(&end_line) || self.comment_lines.contains(&start_line)
+        {
+            Some("comment")
+        } else {
+            None
+        }
+    }
+
+    /// expr → `__quoll.log(id, expr)`. A `//?` annotation on the line only
+    /// re-tags the site `comment` (same capture; the host filters by kind for
+    /// quiet mode). A `//?.` annotation instead emits a `perf` site that TIMES
+    /// the expression — and must wrap it in a thunk, because a call argument
+    /// evaluates eagerly and there'd be nothing left to time.
     fn wrap_value(&mut self, expr: &mut Expression<'a>) {
         let span = expr.span();
-        let id = self.new_site(span, "expr");
-        let inner = self.take_expression(expr);
-        *expr = self.quoll_call("log", id, Some(inner), span);
+        match self.annotation_for(span) {
+            Some("perf") => {
+                let id = self.new_site(span, "perf");
+                let inner = self.take_expression(expr);
+                let thunk = self.arrow_thunk(inner, span);
+                *expr = self.quoll_call("perf", id, Some(thunk), span);
+            }
+            kind => {
+                let id = self.new_site(span, kind.unwrap_or("expr"));
+                let inner = self.take_expression(expr);
+                *expr = self.quoll_call("log", id, Some(inner), span);
+            }
+        }
+    }
+
+    /// `() => inner` — defers `inner` so `__quoll.perf` can time its evaluation.
+    fn arrow_thunk(&self, inner: Expression<'a>, span: Span) -> Expression<'a> {
+        let params = self.ast.formal_parameters(
+            span,
+            FormalParameterKind::ArrowFormalParameters,
+            self.ast.vec(),
+            NONE,
+        );
+        let mut stmts = self.ast.vec_with_capacity(1);
+        stmts.push(self.ast.statement_expression(span, inner));
+        let body = self.ast.function_body(span, self.ast.vec(), stmts);
+        self.ast
+            .expression_arrow_function(span, true, false, NONE, params, NONE, body)
     }
 
     /// expr → `(__quoll.cover(id), expr)`
