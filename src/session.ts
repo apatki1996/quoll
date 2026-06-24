@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 import type { RemoteValue, RunnerMsg } from "../protocol/index.ts";
 import { config } from "./configuration.ts";
 import { EXTENSION_ID } from "./constants.ts";
-import { prepareRun, type PreparedRun } from "./instrument/index.ts";
+import { prepareRun } from "./instrument/index.ts";
 import { Aggregator } from "./render/aggregate.ts";
 import { Renderer } from "./render/decorations.ts";
 import { startRun, type RunHandle } from "./runner/client.ts";
@@ -23,7 +23,6 @@ const EXPAND_TIMEOUT_MS = 3000;
 export class QuollSession implements vscode.Disposable {
   private runId = 0;
   private run: RunHandle | undefined;
-  private prepared: PreparedRun | undefined;
   private agg: Aggregator | undefined;
   /** Absolute paths of imported project files; editing any re-runs the entry. */
   private deps = new Set<string>();
@@ -74,7 +73,7 @@ export class QuollSession implements vscode.Disposable {
     this.run?.cancel();
     const runId = ++this.runId;
 
-    this.prepared = prepareRun(
+    const prepared = prepareRun(
       this.doc.getText(),
       {
         filename: this.doc.fileName,
@@ -82,25 +81,29 @@ export class QuollSession implements vscode.Disposable {
       },
       this.extensionRoot,
     );
-    this.agg = new Aggregator(
-      this.prepared.sites,
-      (id) => (id === undefined ? undefined : this.prepared?.toSourceLine(id)),
-      config.values(),
-    );
-    this.deps = new Set(this.prepared.deps); // refresh the watch graph each run
     this.failPendingExpands();
-    this.queueUpdate();
     this.renderer.clear();
 
-    if (this.prepared.errors.length > 0) {
+    if (!prepared.ok) {
+      this.agg = undefined;
+      this.deps = new Set(); // a broken entry clears the watch graph until it parses again
       const errLines = new Map<number, string>();
-      for (const err of this.prepared.errors) {
+      for (const err of prepared.errors) {
         this.output.appendLine(`✗ ${err.message}`);
         if (err.line !== undefined) errLines.set(err.line, err.message);
       }
+      this.queueUpdate();
       this.renderer.setSnapshot(new Map(), new Map(), errLines);
       return; // wait for the next edit; nothing runnable
     }
+
+    this.agg = new Aggregator(
+      prepared.sites,
+      (id) => (id === undefined ? undefined : prepared.toSourceLine(id)),
+      config.values(),
+    );
+    this.deps = new Set(prepared.deps); // refresh the watch graph each run
+    this.queueUpdate();
 
     this.output.appendLine(`[quoll] run #${runId} ${this.doc.fileName}`);
     // The workspace folder (or the file's dir if loose) scopes read access AND
@@ -114,7 +117,7 @@ export class QuollSession implements vscode.Disposable {
       // node_modules via cwd, not the extension's own (see stageRunner).
       runnerMain: stageRunner(this.extensionRoot),
       runId,
-      code: this.prepared.code,
+      code: prepared.code,
       entry: this.doc.fileName,
       projectRoot,
       onMessage: (msg) => this.onMessage(msg),
