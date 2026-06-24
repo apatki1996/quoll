@@ -586,7 +586,7 @@ dependencies = [
  "oxc_data_structures",
  "oxc_index",
  "oxc_semantic",
- "oxc_sourcemap",
+ "oxc_sourcemap 7.0.0",
  "oxc_span",
  "oxc_str",
  "oxc_syntax",
@@ -726,6 +726,19 @@ name = "oxc_sourcemap"
 version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db3866f9075027840e0711b52e15d2e1ba076fc5f5f01c96eeedd26375410641"
+dependencies = [
+ "base64-simd",
+ "json-escape-simd",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "oxc_sourcemap"
+version = "8.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "174d2498c2390ccfab0a9caaf47ef5accda1d509aaa34a5be8f45e00e5299f04"
 dependencies = [
  "base64-simd",
  "json-escape-simd",
@@ -918,7 +931,7 @@ dependencies = [
  "oxc_codegen",
  "oxc_parser",
  "oxc_semantic",
- "oxc_sourcemap",
+ "oxc_sourcemap 8.0.1",
  "oxc_span",
  "oxc_str",
  "oxc_transformer",
