@@ -59,7 +59,7 @@ async function runCase(file) {
   const source = readFileSync(file, "utf8");
   const expect = parseExpectations(source);
   const prepared = prepareRun(source, { filename: file, jsx: false }, root);
-  if (prepared.errors.length > 0) {
+  if (!prepared.ok) {
     throw new Error(`instrument failed: ${prepared.errors[0].message}`);
   }
 

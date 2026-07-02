@@ -53,7 +53,18 @@ export function startRun(opts: StartRunOpts): RunHandle {
   // available. --sloppy-imports lets transitive PROJECT deps (real files
   // loaded by Deno, not rewritten by the host) use extensionless/index
   // specifiers, matching what the host's resolver accepts for the entry.
-  const args = ["run", "--quiet", "--no-prompt", "--node-modules-dir=manual", "--sloppy-imports"];
+  // --no-remote: block remote (http/https/jsr) module specifiers. Without it,
+  // user code can exfiltrate via a computed `import("https://…/" + secret)` URL
+  // even though --allow-net denies fetch (remote imports are a separate Deno
+  // capability). Local file:///npm:/node: imports are unaffected.
+  const args = [
+    "run",
+    "--quiet",
+    "--no-prompt",
+    "--no-remote",
+    "--node-modules-dir=manual",
+    "--sloppy-imports",
+  ];
   if (opts.projectRoot) args.push(`--allow-read=${opts.projectRoot}`);
   args.push(opts.runnerMain);
   const child = spawn(opts.denoPath, args, {
