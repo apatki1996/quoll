@@ -11,6 +11,10 @@ Quoll runs your JavaScript/TypeScript as you type and shows what your code actua
 - **TypeScript out of the box** — no build step or config needed
 - **Sandboxed execution** — code runs in a permission-locked Deno process with no file system or network access
 
+![quoll screenshot](./examples/one-liners.png "Quoll")
+
+Checkout some [more examples](./examples/EXAMPLES.md).
+
 ## Status
 
 Quoll is in early, active development. The current build supports single-file scratchpads with the features above. The roadmap (see [`quoll-spec.md`](quoll-spec.md)) targets full feature parity with Quokka.js, including the value explorer, project imports with change detection, live comments (`//?`), logpoints, time machine, CPU profiling, and more.
