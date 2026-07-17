@@ -28,7 +28,7 @@ jobs:
       # pnpm must be set up before setup-node so the `cache: pnpm` step can find
       # it. Version comes from package.json "packageManager".
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24 # >=22.18 strips TS types natively; the eval harness imports .ts directly
           cache: pnpm
@@ -89,7 +89,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
