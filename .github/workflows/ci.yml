@@ -11,6 +11,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Fails a PR that pulls in a dependency with a known advisory, so the diff is
+  # rejected before merge rather than caught by a Dependabot alert afterwards.
+  # PR-only: there's no base ref to diff against on a push to main.
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
+
   build-and-eval:
     runs-on: ubuntu-latest
     steps:
