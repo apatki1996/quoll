@@ -22,7 +22,7 @@ oxc_semantic = "0.137.0"
 oxc_sourcemap = "8.0.1"
 oxc_span = "0.137.0"
 oxc_str = "0.137.0"
-oxc_transformer = "0.137.0"
+oxc_transformer = "0.143.0"
 
 [build-dependencies]
 napi-build = "2.3.2"
