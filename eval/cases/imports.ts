@@ -5,6 +5,10 @@ import { double } from "./fixtures/util.ts";
 
 const result = double(21); //== 42
 
+// A re-export's specifier sits in a different AST node than a plain import and
+// must be rewritten too — an unresolved one fails the data: URL entry outright.
+export { double as twice } from "./fixtures/util.ts";
+
 // Regression (AST-level rewrite): a string literal that merely LOOKS like an
 // import must never be rewritten — under the old regex tier this line's value
 // would have had its "./fixtures/util.ts" swapped for a file:// URL.

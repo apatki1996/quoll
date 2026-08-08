@@ -19,7 +19,7 @@ use std::collections::HashSet;
 
 use oxc_allocator::{Allocator, Vec as ArenaVec};
 use oxc_ast::ast::*;
-use oxc_ast::{AstBuilder, NONE};
+use oxc_ast::builder::AstBuilder;
 use oxc_ast_visit::VisitMut;
 use oxc_ast_visit::walk_mut;
 use oxc_span::{GetSpan, Span};
@@ -90,7 +90,8 @@ impl<'a> Instrumenter<'a> {
 
     /// Detach `expr`, leaving a placeholder that is always overwritten.
     fn take_expression(&self, expr: &mut Expression<'a>) -> Expression<'a> {
-        std::mem::replace(expr, self.ast.expression_null_literal(expr.span()))
+        let placeholder = Expression::new_null_literal(expr.span(), &self.ast);
+        std::mem::replace(expr, placeholder)
     }
 
     /// `__quoll.<method>(<id>[, <arg>])`, every node spanned to `span`.
@@ -101,23 +102,22 @@ impl<'a> Instrumenter<'a> {
         arg: Option<Expression<'a>>,
         span: Span,
     ) -> Expression<'a> {
-        let object = self.ast.expression_identifier(span, "__quoll");
-        let property = self.ast.identifier_name(span, method);
-        let callee = Expression::from(
-            self.ast
-                .member_expression_static(span, object, property, false),
-        );
-        let mut args = self.ast.vec_with_capacity(2);
-        args.push(Argument::from(self.ast.expression_numeric_literal(
+        let object = Expression::new_identifier(span, "__quoll", &self.ast);
+        let property = IdentifierName::new(span, method, &self.ast);
+        let callee =
+            Expression::new_static_member_expression(span, object, property, false, &self.ast);
+        let mut args = ArenaVec::with_capacity_in(2, &self.ast);
+        args.push(Argument::from(Expression::new_numeric_literal(
             span,
             f64::from(id),
             None,
             NumberBase::Decimal,
+            &self.ast,
         )));
         if let Some(a) = arg {
             args.push(Argument::from(a));
         }
-        self.ast.expression_call(span, callee, NONE, args, false)
+        Expression::new_call_expression(span, callee, None, args, false, &self.ast)
     }
 
     /// Annotation kind for an expression, by the source line(s) it spans.
@@ -161,17 +161,17 @@ impl<'a> Instrumenter<'a> {
 
     /// `() => inner` — defers `inner` so `__quoll.perf` can time its evaluation.
     fn arrow_thunk(&self, inner: Expression<'a>, span: Span) -> Expression<'a> {
-        let params = self.ast.formal_parameters(
+        let params = FormalParameters::boxed(
             span,
             FormalParameterKind::ArrowFormalParameters,
-            self.ast.vec(),
-            NONE,
+            ArenaVec::new_in(&self.ast),
+            None,
+            &self.ast,
         );
-        let mut stmts = self.ast.vec_with_capacity(1);
-        stmts.push(self.ast.statement_expression(span, inner));
-        let body = self.ast.function_body(span, self.ast.vec(), stmts);
-        self.ast
-            .expression_arrow_function(span, true, false, NONE, params, NONE, body)
+        // Concise body: the expression IS the implicit return, so the thunk
+        // hands `__quoll.perf` something that still evaluates to the value.
+        let body = ArrowFunctionBody::from(inner);
+        Expression::new_arrow_function_expression(span, false, None, params, None, body, &self.ast)
     }
 
     /// expr → `(__quoll.cover(id), expr)`
@@ -179,16 +179,16 @@ impl<'a> Instrumenter<'a> {
         let span = expr.span();
         let id = self.new_site(span, "branch");
         let inner = self.take_expression(expr);
-        let mut exprs = self.ast.vec_with_capacity(2);
+        let mut exprs = ArenaVec::with_capacity_in(2, &self.ast);
         exprs.push(self.quoll_call("cover", id, None, span));
         exprs.push(inner);
-        *expr = self.ast.expression_sequence(span, exprs);
+        *expr = Expression::new_sequence_expression(span, exprs, &self.ast);
     }
 
     fn cover_statement(&mut self, span: Span) -> Statement<'a> {
         let id = self.new_site(span, "statement");
-        self.ast
-            .statement_expression(span, self.quoll_call("cover", id, None, span))
+        let call = self.quoll_call("cover", id, None, span);
+        Statement::new_expression_statement(span, call, &self.ast)
     }
 
     /// Normalize a braceless body (`if (c) foo();`, `while (c) bar();`) into
@@ -199,10 +199,10 @@ impl<'a> Instrumenter<'a> {
             return;
         }
         let span = stmt.span();
-        let inner = std::mem::replace(stmt, self.ast.statement_empty(span));
-        let mut body = self.ast.vec_with_capacity(1);
+        let inner = std::mem::replace(stmt, Statement::new_empty_statement(span, &self.ast));
+        let mut body = ArenaVec::with_capacity_in(1, &self.ast);
         body.push(inner);
-        *stmt = self.ast.statement_block(span, body);
+        *stmt = Statement::new_block_statement(span, body, &self.ast);
     }
 }
 
@@ -223,8 +223,8 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
     fn visit_statements(&mut self, stmts: &mut ArenaVec<'a, Statement<'a>>) {
         walk_mut::walk_statements(self, stmts); // children first
 
-        let old = std::mem::replace(stmts, self.ast.vec());
-        let mut rebuilt = self.ast.vec_with_capacity(old.len() * 2);
+        let old = std::mem::replace(stmts, ArenaVec::new_in(&self.ast));
+        let mut rebuilt = ArenaVec::with_capacity_in(old.len() * 2, &self.ast);
         for stmt in old {
             if !matches!(stmt, Statement::ImportDeclaration(_)) {
                 rebuilt.push(self.cover_statement(stmt.span()));
@@ -304,19 +304,19 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
     }
 
     fn visit_arrow_function_expression(&mut self, arrow: &mut ArrowFunctionExpression<'a>) {
-        if !arrow.expression {
+        if !arrow.body.is_expression() {
             walk_mut::walk_arrow_function_expression(self, arrow);
             return;
         }
-        // Expression-bodied arrow: the body is one ExpressionStatement whose
-        // value is the implicit return. Inserting a cover statement would
-        // force a block body and silently destroy the return value — so no
-        // statement site here, only the value wrap (which returns the value).
+        // Expression-bodied arrow: the body expression IS the implicit return.
+        // Inserting a cover statement would force a block body and silently
+        // destroy the return value — so no statement site here, only the value
+        // wrap (which returns the value).
         self.visit_formal_parameters(&mut arrow.params);
-        if let Some(Statement::ExpressionStatement(stmt)) = arrow.body.statements.first_mut() {
-            self.visit_expression(&mut stmt.expression);
-            if !is_console_call(&stmt.expression) {
-                self.wrap_value(&mut stmt.expression);
+        if let Some(body) = arrow.body.as_expression_mut() {
+            self.visit_expression(body);
+            if !is_console_call(body) {
+                self.wrap_value(body);
             }
         }
     }

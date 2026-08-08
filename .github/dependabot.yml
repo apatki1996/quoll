@@ -20,12 +20,17 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     groups:
-      # oxc_* crates lockstep on the same version; bump them together.
-      oxc:
+      # ONE group for the whole crate, majors included. The oxc_* crates only
+      # compile against their own version — a PR bumping one of them alone
+      # puts two incompatible copies of oxc_ast in the lock file and fails the
+      # build (that is what #22-#25 did). An `oxc*`-only group did not hold:
+      # oxc_sourcemap still landed in the update-types group, so the split is
+      # prevented structurally here instead, by leaving nothing to split into.
+      cargo:
         patterns:
-          - "oxc*"
-      cargo-minor-patch:
+          - "*"
         update-types:
+          - "major"
           - "minor"
           - "patch"
 
