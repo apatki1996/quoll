@@ -40,11 +40,9 @@ impl<'a> Visit<'a> for RequestCollector {
         walk::walk_import_declaration(self, decl);
     }
 
-    fn visit_export_named_declaration(&mut self, decl: &ExportNamedDeclaration<'a>) {
-        if let Some(source) = &decl.source {
-            self.record(source.value.as_str());
-        }
-        walk::walk_export_named_declaration(self, decl);
+    fn visit_export_from_declaration(&mut self, decl: &ExportFromDeclaration<'a>) {
+        self.record(decl.source.value.as_str());
+        walk::walk_export_from_declaration(self, decl);
     }
 
     fn visit_export_all_declaration(&mut self, decl: &ExportAllDeclaration<'a>) {
@@ -91,11 +89,9 @@ impl<'a> VisitMut<'a> for ImportRewriter<'a, '_> {
         walk_mut::walk_import_declaration(self, decl);
     }
 
-    fn visit_export_named_declaration(&mut self, decl: &mut ExportNamedDeclaration<'a>) {
-        if let Some(source) = &mut decl.source {
-            self.rewrite(source);
-        }
-        walk_mut::walk_export_named_declaration(self, decl);
+    fn visit_export_from_declaration(&mut self, decl: &mut ExportFromDeclaration<'a>) {
+        self.rewrite(&mut decl.source);
+        walk_mut::walk_export_from_declaration(self, decl);
     }
 
     fn visit_export_all_declaration(&mut self, decl: &mut ExportAllDeclaration<'a>) {
