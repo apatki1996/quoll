@@ -7,6 +7,10 @@
 //   //~ covered|uncovered|partial   line's coverage gutter state
 //   //! <text>                 line must show an error containing <text>
 //   //@values all|comments     file-level: render mode for the Aggregator
+//   //@select <line>:<col>     file-level: a value-on-selection anchor, in the
+//                              0-based UTF-16 columns VS Code reports
+//   //@logpoint <line>         file-level: a logpoint on <line> (line-granular,
+//                              like a VS Code breakpoint)
 //
 // The harness runs the REAL pipeline: native instrument -> Deno runner ->
 // protocol messages -> line attribution, then diffs against expectations.
@@ -35,6 +39,26 @@ const VALUE_RE = /\/\/=>\s*(.*?)(?=\s*\/\/[~!]|$)/;
 const COV_RE = /\/\/~\s*(covered|uncovered|partial)/;
 const ERR_RE = /\/\/!\s*(.*?)(?=\s*\/\/[~=]|$)/;
 
+// Phase 8/9 `extraSites`: the harness stands in for the editor state the live
+// host reads (a selection, a breakpoint) so the anchoring rules — innermost
+// capture wins, unclaimed anchors fall back to their line — are covered by the
+// golden net rather than only by hand-testing in the extension host.
+function parseExtraSites(source) {
+  return [
+    ...[...source.matchAll(/\/\/@select\s+(\d+):(\d+)/g)].map((m) => ({
+      line: Number(m[1]),
+      column: Number(m[2]),
+      kind: "selection",
+    })),
+    // A breakpoint marks a line, so column is meaningless here.
+    ...[...source.matchAll(/\/\/@logpoint\s+(\d+)/g)].map((m) => ({
+      line: Number(m[1]),
+      column: 0,
+      kind: "logpoint",
+    })),
+  ];
+}
+
 function parseExpectations(source) {
   const expect = { values: new Map(), exact: new Map(), coverage: new Map(), errors: new Map() };
   source.split("\n").forEach((text, i) => {
@@ -58,7 +82,11 @@ function parseExpectations(source) {
 async function runCase(file) {
   const source = readFileSync(file, "utf8");
   const expect = parseExpectations(source);
-  const prepared = prepareRun(source, { filename: file, jsx: false }, root);
+  const prepared = prepareRun(
+    source,
+    { filename: file, jsx: false, extraSites: parseExtraSites(source) },
+    root,
+  );
   if (!prepared.ok) {
     throw new Error(`instrument failed: ${prepared.errors[0].message}`);
   }

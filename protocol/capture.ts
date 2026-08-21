@@ -26,8 +26,22 @@ export type CaptureSiteKind =
 
 export type ExtraSiteKind = Extract<CaptureSiteKind, "logpoint" | "selection">;
 
+/**
+ * A caller-supplied capture position. Both kinds produce an ordinary value
+ * capture that quiet mode reveals; they differ only in provenance — and in
+ * granularity, because their sources do:
+ * - `logpoint`  — a VS Code breakpoint marks a LINE, so `column` is ignored
+ *                 and every capture on the line is tagged (same rule as `//?`).
+ * - `selection` — an editor selection marks a SPAN, so the position anchors the
+ *                 INNERMOST capture containing it; an anchor that lands outside
+ *                 every capture (a variable name, a keyword) falls back to
+ *                 tagging its line, so a reveal is never silently empty.
+ */
 export type ExtraSite = {
+  /** 1-based source line. */
   line: number;
+  /** 0-based UTF-16 code-unit column, as VS Code reports it. `prepareRun`
+   * converts to the byte columns the Rust core indexes by. */
   column: number;
   kind: ExtraSiteKind;
 };

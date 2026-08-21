@@ -1,6 +1,6 @@
 import { dirname } from "node:path";
 import * as vscode from "vscode";
-import type { RemoteValue, RunnerMsg } from "../protocol/index.ts";
+import type { ExtraSite, RemoteValue, RunnerMsg } from "../protocol/index.ts";
 import { config } from "./configuration.ts";
 import { EXTENSION_ID } from "./constants.ts";
 import { prepareRun } from "./instrument/index.ts";
@@ -17,6 +17,20 @@ export type ExpandOutcome =
 const EXPAND_TIMEOUT_MS = 3000;
 
 /**
+ * This document's enabled breakpoints as logpoint sites (Phase 9). A breakpoint
+ * marks a LINE, so the column is meaningless here and the core ignores it.
+ * Read fresh per run rather than mirrored into session state: VS Code already
+ * owns this list, and a second copy could only drift from it.
+ */
+function breakpointSites(doc: vscode.TextDocument): ExtraSite[] {
+  const uri = doc.uri.toString();
+  return vscode.debug.breakpoints
+    .filter((bp): bp is vscode.SourceBreakpoint => bp instanceof vscode.SourceBreakpoint)
+    .filter((bp) => bp.enabled && bp.location.uri.toString() === uri)
+    .map((bp) => ({ line: bp.location.range.start.line + 1, column: 0, kind: "logpoint" }));
+}
+
+/**
  * A live session on one document: re-runs (debounced) on every edit and
  * renders runner messages as inline decorations + output channel lines.
  */
@@ -29,6 +43,10 @@ export class QuollSession implements vscode.Disposable {
   private renderQueued = false;
   private nextReqId = 1;
   private readonly pendingExpands = new Map<number, (outcome: ExpandOutcome) => void>();
+  /** Non-empty editor selections in this document (Phase 8 value-on-selection). */
+  private selection: ExtraSite[] = [];
+  /** Serialized `extraSites()` of the last run — the re-run change detector. */
+  private extraKey = "";
   private updateQueued = false;
   private readonly updateEmitter = new vscode.EventEmitter<void>();
   /** Fires (microtask-coalesced) when explorer-visible data changes. */
@@ -55,6 +73,20 @@ export class QuollSession implements vscode.Disposable {
         if (this.deps.has(saved.fileName)) this.scheduleRun();
       }),
       vscode.window.onDidChangeVisibleTextEditors(() => this.renderer.reapply()),
+      vscode.window.onDidChangeTextEditorSelection((e) => {
+        if (e.textEditor.document !== this.doc) return;
+        // Only a real selection reveals anything. A bare cursor move is by far
+        // the most common event on this channel and must never spawn a run.
+        this.selection = e.selections
+          .filter((sel) => !sel.isEmpty)
+          .map((sel) => ({
+            line: sel.start.line + 1,
+            column: sel.start.character,
+            kind: "selection",
+          }));
+        this.rerunIfExtraSitesChanged();
+      }),
+      vscode.debug.onDidChangeBreakpoints(() => this.rerunIfExtraSitesChanged()),
       // The values mode is read when the Aggregator is built, so a re-run
       // re-folds the current stream under the new policy.
       vscode.workspace.onDidChangeConfiguration((e) => {
@@ -62,6 +94,33 @@ export class QuollSession implements vscode.Disposable {
       }),
     );
     this.runNow();
+  }
+
+  /**
+   * Caller-supplied capture sites: the editor state that opts a line in beyond
+   * a `//?` comment — the live selection and this document's breakpoints.
+   *
+   * Quiet mode is the only mode where opting in means anything: `all` renders
+   * every expression already, so a tag would change no pixel while the extra
+   * runs (one per drag-select, one per breakpoint toggle) cost a Deno process
+   * each. So in `all` mode there is nothing to collect.
+   */
+  private extraSites(): ExtraSite[] {
+    if (config.values() !== "comments") return [];
+    return [...this.selection, ...breakpointSites(this.doc)];
+  }
+
+  /**
+   * Re-run only when the opt-in set actually CHANGED. Both source events fire
+   * far more often than they mean anything — clearing a selection that never
+   * revealed a value, toggling a breakpoint in another file — and every run is
+   * a process spawn.
+   */
+  private rerunIfExtraSitesChanged(): void {
+    const key = JSON.stringify(this.extraSites());
+    if (key === this.extraKey) return;
+    this.extraKey = key;
+    this.scheduleRun();
   }
 
   private scheduleRun(): void {
@@ -73,11 +132,14 @@ export class QuollSession implements vscode.Disposable {
     this.run?.cancel();
     const runId = ++this.runId;
 
+    const extraSites = this.extraSites();
+    this.extraKey = JSON.stringify(extraSites);
     const prepared = prepareRun(
       this.doc.getText(),
       {
         filename: this.doc.fileName,
         jsx: this.doc.languageId.endsWith("react"),
+        extraSites,
       },
       this.extensionRoot,
     );

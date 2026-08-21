@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `//?` lines, leaving the rest uncluttered.
 - **Perf timing** — `//?.` on a line times its execution and renders `⏱ <n>ms`
   inline instead of the value.
+- **Value on selection** — selecting an expression reveals its value inline
+  (Phase 8). The selection anchors the innermost capture containing it, so
+  selecting `x * 2` inside `xs.map(x => x * 2)` shows the element values rather
+  than the resulting array; selecting a variable's name reveals its line.
+- **Logpoints** — a VS Code breakpoint set in a Quoll file opts that line in the
+  same way `//?` does, with no debugger session involved (Phase 9).
+
+  Both reveal-on-demand features apply to quiet mode (`quoll.values: comments`),
+  which is where opting a line in means anything — the `all` default already
+  renders every expression.
 
 ## [0.0.1] - 2026-06-13
 

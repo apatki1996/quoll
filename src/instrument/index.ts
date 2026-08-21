@@ -1,4 +1,4 @@
-import type { CaptureSite, InstrumentOpts, RawSourceMap } from "../../protocol/index.ts";
+import type { CaptureSite, ExtraSite, InstrumentOpts, RawSourceMap } from "../../protocol/index.ts";
 import { identityInstrument } from "./identity.ts";
 import { loadNative } from "./native.ts";
 import { buildLineMap } from "./sourcemap.ts";
@@ -29,6 +29,26 @@ export type PreparedRun =
       toSourceLine(generatedLine: number): number | undefined;
     }
   | { ok: false; errors: PrepareError[] };
+
+/**
+ * VS Code positions count UTF-16 code units; the Rust core indexes the source
+ * by BYTE offset (that's what `CaptureSite.column` reports). Convert at this
+ * boundary — the one place that owns the napi coordinate contract — so callers
+ * can hand over editor positions verbatim and a non-ASCII prefix on the line
+ * (an accented identifier, an emoji in a string) can't silently shift an
+ * anchor off its expression.
+ */
+function toByteColumns(
+  source: string,
+  sites: readonly ExtraSite[],
+): { line: number; column: number; kind: string }[] {
+  const lines = source.split("\n");
+  return sites.map((site) => ({
+    line: site.line,
+    column: Buffer.byteLength((lines[site.line - 1] ?? "").slice(0, site.column), "utf8"),
+    kind: site.kind,
+  }));
+}
 
 /** The two failure exits (transform errors, native throw) carry only `errors`. */
 function failed(errors: PrepareError[]): PreparedRun {
@@ -64,7 +84,13 @@ export function prepareRun(
     // AST before its single codegen.
     const requests = native.listImports(source, opts.filename, opts.jsx);
     const { rewrites } = resolveRequests(requests, opts.filename);
-    const result = native.instrument(source, { filename: opts.filename, jsx: opts.jsx, rewrites });
+    const extraSites = opts.extraSites?.length ? toByteColumns(source, opts.extraSites) : undefined;
+    const result = native.instrument(source, {
+      filename: opts.filename,
+      jsx: opts.jsx,
+      rewrites,
+      extraSites,
+    });
     if (result.errors.length > 0) return failed(result.errors);
 
     const map = JSON.parse(result.mapJson) as RawSourceMap;

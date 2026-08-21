@@ -84,10 +84,10 @@
           ],
           "enumDescriptions": [
             "Always-on: show the value of every expression inline.",
-            "Quiet: show inline values only on lines you opt into with a //? comment. //?. timings and console output still show."
+            "Quiet: show inline values only on lines you opt into — a //? comment, the current selection, or a breakpoint. //?. timings and console output still show."
           ],
           "default": "all",
-          "description": "Which inline runtime values to show. 'all' is Quoll's always-on default; 'comments' shows only //?-annotated lines."
+          "description": "Which inline runtime values to show. 'all' is Quoll's always-on default; 'comments' shows only lines you opt into with a //? comment, a selection, or a breakpoint."
         }
       }
     }

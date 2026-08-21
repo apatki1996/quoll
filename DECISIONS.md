@@ -17,6 +17,67 @@ future regression fails a test, not just memory.
 
 ---
 
+## 2026-08-21 — `extraSites`: value-on-selection and Logpoints [DECIDED]
+
+- **Context:** the slice the Phase 8 entry deferred. `InstrumentOpts.extraSites`
+  was declared in the frozen protocol but never *produced* by the core, so
+  `selection` and `logpoint` were the only `CaptureSiteKind`s nothing could emit
+  — even though `aggregate.ts` had listed both in `OPT_IN_KINDS` since Phase 8.
+  Two parity rows were blocked behind one piece of core work.
+- **Decision:**
+  - **The two kinds get DIFFERENT granularity, because their sources do.** A VS
+    Code breakpoint marks a *line*, so a logpoint is a line set checked exactly
+    like `//?`. An editor selection marks a *span*, so a selection is an anchor
+    offset that claims the innermost capture containing it — children are
+    visited before parents, so selecting `x * 2` in `xs.map(x => x * 2)` reveals
+    the arrow body and leaves the enclosing call quiet. One shared granularity
+    was tried on paper and fails: breakpoints report column 0, which sits before
+    every initializer span and would match nothing.
+  - **An anchor no capture contains falls back to its LINE.** Double-clicking
+    the name in `const x = compute()` puts the anchor outside every capture
+    span; without the fallback the reveal is silently empty, which reads as a
+    broken feature rather than a precise one. A post-pass re-tags that line's
+    `expr` sites — only `expr`, since `perf`/`branch`/`statement` encode
+    mechanism rather than opt-in policy.
+  - **`//?.` outranks an anchor and never consumes one.** Perf changes the
+    capture *mechanism* (time the expression instead of reading it); letting a
+    selection turn a timed line back into a value read would break the `//?.`
+    contract for as long as the cursor happened to sit there.
+  - **Columns convert UTF-16 → bytes at the napi boundary** (`prepareRun`), not
+    at each call site. Every producer of an `ExtraSite` is a VS Code API, and
+    the core indexes source by byte offset; converting once, where the contract
+    lives, keeps callers passing editor positions verbatim.
+  - **Collected only in quiet mode.** In `all` mode every expression already
+    renders, so the tag would change no pixel while each drag-select and
+    breakpoint toggle cost a Deno process.
+- **No protocol change:** `ExtraSite`, `ExtraSiteKind` and both site kinds were
+  already frozen. Third phase running that the upfront design pre-paid for.
+- **Rejected:**
+  - *Injecting NEW captures at arbitrary sub-expressions* (so selecting `bar` in
+    `foo(bar)` reads `bar` itself, as Quokka does) — wrapping an arbitrary
+    expression is not semantics-preserving: `obj.m()` → `__quoll.log(id, obj.m)()`
+    silently drops the `this` binding, and assignment targets and patterns are
+    not expressions at all. Nearest-enclosing-capture is truthful and safe;
+    genuine sub-expression capture needs its own safe-position analysis first.
+  - *Re-running on every selection change* — cursor moves dominate that channel.
+    Only non-empty selections count, and only when the opt-in set actually
+    changed (`extraKey`), so clearing a selection that revealed nothing is free.
+  - *A `quoll.showValueAtSelection` command* — a gesture users already make
+    (double-click, drag) beats a palette command they have to learn.
+  - *Honouring only breakpoints with `logMessage` set* — the spec says
+    "breakpoints in Quoll files", and a plain breakpoint is the gesture people
+    reach for. Revisit if the two need to mean different things.
+- **Golden case:** `selection.ts` — anchored, innermost-wins, line-fallback and
+  logpoint, plus a line whose emoji prefix makes a byte/UTF-16 mix-up change the
+  answer. Verified to FAIL with the feature removed and again with the column
+  conversion removed, so it is a real net and not a tautology.
+- **Known limitation:** selecting on a line with no capture at all (a
+  `console.log` line, a bare `}`) reveals nothing — there is no captured value
+  to show, and inventing one would violate truthful-over-cosmetic.
+- **Revisit if:** sub-expression values are asked for often enough to justify
+  the safe-wrap analysis; or logpoints need to carry a `logMessage` expression
+  rather than simply opting their line in.
+
 ## 2026-06-19 — Phase 8 live comments: `//?`, `//?.`, and quiet mode [DECIDED]
 
 - **Context:** Phase 8's first slice. Quokka's `//?` shows a line's value and
