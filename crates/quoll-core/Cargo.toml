@@ -2,6 +2,11 @@
 name = "quoll_core"
 version = "0.1.0"
 edition = "2024"
+# Minimum supported Rust, independent of the exact build pin in
+# /rust-toolchain.toml. Tracks the highest MSRV among the oxc crates, so
+# cargo names OUR requirement rather than leaving a contributor to work it
+# out from a list of transitive packages.
+rust-version = "1.95"
 
 [lib]
 crate-type = ["cdylib"]
