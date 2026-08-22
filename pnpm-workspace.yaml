@@ -5,3 +5,20 @@ packages:
 
 allowBuilds:
   esbuild: true
+
+# Security overrides for transitive DEV-only dependencies of @vscode/test-cli,
+# which is already at its latest version (0.0.15) and pins mocha ^11.7.6 — so
+# there is no upstream release to upgrade into. Both are advisories against
+# packages mocha depends on, and both fixes are a major bump past mocha's
+# declared range, hence the override rather than a plain lockfile refresh.
+#
+# Nothing here reaches the shipped extension: esbuild bundles the runtime and
+# the VSIX has no runtime dependencies (see quoll-spec.md stack notes).
+#
+# Drop an entry once mocha's own range covers the patched version.
+overrides:
+  # GHSA-5c6j-r48x-rmvq (high, RCE via RegExp.flags / Date.prototype.toISOString)
+  # and GHSA-qj8w-gfj5-8c6v (moderate, CPU-exhaustion DoS).
+  serialize-javascript@<7.0.5: ^7.0.5
+  # GHSA-73rr-hh4g-fpgx (low, DoS in parsePatch/applyPatch).
+  diff@<8.0.3: ^8.0.3
