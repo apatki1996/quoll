@@ -294,9 +294,41 @@ Phases 8–11 and 15 are deliberately cheap because the protocol pre-paid for th
   the main reason the IPC layer stays runtime-agnostic so a Node runner can be
   swapped in if needed.
 
-## First task for the agent
+## Where the build actually is
 
-Lay down the frozen interfaces above (napi signature, `HostMsg`/`RunnerMsg`,
-`RemoteValue`), scaffold phases 0–2, then build the golden-eval harness before
-touching phase 4. Treat the source-map mapping and the serialization protocol as
-the two highest-risk seams.
+Kept current so the roadmap above reads as a plan, not a to-do list. The two
+highest-risk seams remain the source-map mapping and the serialization
+protocol — that is where a change looks right and is subtly wrong.
+
+**Done:** phases 0–6 and 8. Single-file JS/TS scratchpads run as you type with
+inline values, coverage (incl. partial), inline errors, inline `console.log`,
+the value explorer with lazy `expand`, project imports with a transitive watch
+graph, and live comments (`//?`, `//?.`, plus `quoll.values: "comments"` quiet
+mode). Phase 7's hardening landed piecemeal; **jsdom has not been attempted**.
+
+Beyond the numbered phases: **Value Peek phase A** — hover an expression to see
+its captured value, with *Explore value* revealing it in the tree. Phases B
+(`inlineValues: "always" | "hover"`) and C (value-on-selection, the only piece
+that touches the native boundary) are deliberately deferred.
+
+**Not started:** phases 9–15, and jsdom. Phases 9–11 stay cheap because the
+protocol pre-paid for them (`kind`, `extraSites`, the `runId`/`seq` event log).
+
+**Known limitations** (each with a `DECISIONS.md` entry): out-of-order
+settlement of several promises captured at ONE site can mis-slot; Copy Value
+copies the rendered preview, not a deep serialization.
+
+**Not shipped:** nothing is on the marketplace and there is no CD pipeline. The
+manifest packages cleanly (`vsce package`), but the VSIX carries only the host
+platform's napi binary, so a real release needs per-target builds.
+
+**Parked work:** the branch `claude/merge-dependabot-prs-nofliv` holds unmerged
+commits for phase 9 (logpoints) and Value Peek phase C (value-on-selection),
+plus a Rust toolchain pin. It predates the oxc 0.143→0.147 moves and would need
+a rebase; one of its commits also clears dependency advisories that were left
+open deliberately.
+
+**Where the rest of the state lives:** `DECISIONS.md` is the running journal of
+*why* (read it before reopening a settled question — several entries record
+what was rejected and the tripwire that would reverse it), `CHANGELOG.md` is
+what users see, and `CONTRIBUTING.md` has the verify gate every change runs.

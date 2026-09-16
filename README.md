@@ -9,6 +9,9 @@ Quoll runs your JavaScript/TypeScript as you type and shows what your code actua
 - **Live code coverage** — gutter indicators show which lines ran, didn't run, or partially ran
 - **Inline runtime errors** — exceptions and unhandled rejections surface on the line that threw them
 - **Console output** — `console.log` results render inline at the call site
+- **Live comments** — mark a line with `//?` to single it out, or `//?.` to time it; `quoll.values: "comments"` shows only those
+- **Value explorer** — a tree of the run's captured values, expanded lazily, with copy-to-clipboard
+- **Project imports** — import your own files; editing one re-runs the scratchpad
 - **TypeScript out of the box** — no build step or config needed
 - **Sandboxed execution** — code runs in a permission-locked Deno process with no file system or network access
 
@@ -18,7 +21,9 @@ Checkout some [more examples](./examples/EXAMPLES.md).
 
 ## Status
 
-Quoll is in early, active development. The current build supports single-file scratchpads with the features above. The roadmap (see [`quoll-spec.md`](quoll-spec.md)) targets full feature parity with Quokka.js, including the value explorer, project imports with change detection, live comments (`//?`), logpoints, time machine, CPU profiling, and more.
+Quoll is in early, active development and is **not on the marketplace yet** — you run it from source (below).
+
+Everything in the list above works today, for single-file scratchpads. The roadmap (see [`quoll-spec.md`](quoll-spec.md), whose "Where the build actually is" section tracks what's done) targets full feature parity with Quokka.js: a browser-like jsdom runtime, logpoints, the time machine, interactive timeline and value graphs, CPU profiling, and more.
 
 ## How it works
 

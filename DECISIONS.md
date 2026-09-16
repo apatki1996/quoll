@@ -15,6 +15,11 @@ that would make us reverse them. The rule for every entry:
 When a decision has observable behavior, encode it as a golden-eval case so a
 future regression fails a test, not just memory.
 
+Entries that compare Quoll against Quokka cite files under `screenshots/`. That
+directory is deliberately **not tracked** (the captures include personal
+context), so those references are the maintainer's local evidence only — each
+entry states what the screenshot showed, so the reasoning stands without it.
+
 ---
 
 ## 2026-09-16 — Gap 2 closed: the async wait ceiling is `quoll.runTimeoutMs` [DECIDED]
