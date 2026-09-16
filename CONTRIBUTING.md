@@ -78,8 +78,17 @@ pnpm run lint:rust    # cargo clippy (Rust), fails on any warning
 pnpm run build:core   # native instrumentation core
 pnpm run typecheck    # tsc --noEmit
 pnpm run build        # esbuild bundle
+pnpm run test:unit    # Deno unit tests (Aggregator, resolver, serialization)
+pnpm run check:phase3 # source-map attribution
+pnpm run check:phase5 # expand-after-exit keep-alive
+pnpm run check:timeout # post-`done` wait + run-timeout ceiling
 pnpm run eval         # golden-eval harness
+pnpm test             # VS Code integration tests (@vscode/test-electron)
 ```
+
+Everything that spawns the runner needs **Deno on PATH**. If you install it with
+[mise](https://mise.jdx.dev) (the repo pins a version), prefix the command:
+`mise exec -- pnpm run test:unit`.
 
 `pnpm run fmt` auto-formats if `fmt:check` fails; `pnpm run lint:fix` applies
 oxlint's safe autofixes.

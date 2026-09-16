@@ -84,8 +84,33 @@ jobs:
       - name: Native-bundle check
         run: pnpm run check:bundle
 
+      # Unit tests (Aggregator, resolver, serialization) under Deno, which is
+      # what type-checks them — tsconfig excludes *_test.ts.
+      - name: Unit tests
+        run: pnpm run test:unit
+
+      # The end-to-end checks that own one contract each: source-map
+      # attribution (phase 3), expand-after-exit keep-alive (phase 5), and the
+      # post-`done` wait — it waits out pending timers, and the run-timeout
+      # ceiling is what stops a never-quiet run.
+      - name: Contract checks
+        run: |
+          pnpm run check:phase3
+          pnpm run check:phase5
+          pnpm run check:timeout
+
       - name: Golden-eval harness
         run: pnpm run eval
+
+      # The cross-OS job below has neither the native core nor Deno, so the
+      # integration test that needs a REAL run skips there. This job has both,
+      # so run the suite here too — otherwise nothing ever executes it.
+      - name: VS Code integration tests (with a real runner)
+        # This job built the core two steps up, so the hover test must RUN
+        # here, not skip — see hasNativeCore in src/test/extension.test.ts.
+        env:
+          QUOLL_REQUIRE_NATIVE: "1"
+        run: xvfb-run -a pnpm test
 
   # Smoke + glue tests in a real VS Code instance (@vscode/test-electron). These
   # exercise only the extension-host wiring (activation, commands, view, config)

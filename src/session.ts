@@ -119,6 +119,7 @@ export class QuollSession implements vscode.Disposable {
       // node_modules via cwd, not the extension's own (see stageRunner).
       runnerMain: stageRunner(this.extensionRoot),
       runId,
+      runTimeoutMs: config.runTimeoutMs(),
       code: prepared.code,
       entry: this.doc.fileName,
       projectRoot,

@@ -1,4 +1,19 @@
+# Everything here is repo scaffolding: it ships to nobody. The VSIX carries
+# only what the extension loads at runtime (dist/, native/, runner/) plus the
+# marketplace-facing docs (README, CHANGELOG, LICENSE). README images are
+# rewritten to GitHub raw URLs by vsce, so examples/ stays out too.
 .vscode/**
+.claude/**
+.fallow/**
+.githooks/**
+.github/**
+.oxfmtrc.jsonc
+.oxlintrc.json
+rustfmt.toml
+CONTRIBUTING.md
+SECURITY.md
+examples/**
+native/*.d.ts
 src/**
 protocol/**
 crates/**

@@ -1,4 +1,6 @@
 import * as assert from "node:assert";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import * as vscode from "vscode";
 
 const EXTENSION_ID = "apatki.quoll";
@@ -51,6 +53,10 @@ suite("Quoll extension", () => {
     const config = vscode.workspace.getConfiguration("quoll");
     assert.strictEqual(config.get("denoPath"), "deno");
     assert.strictEqual(config.get("debounceMs"), 300);
+    assert.strictEqual(config.get("values"), "all");
+    // Also duplicated in src/configuration.ts DEFAULTS and, as the fallback
+    // for a missing/garbage argv, in runner/main.ts. Drift is what this asserts.
+    assert.strictEqual(config.get("runTimeoutMs"), 10_000);
   });
 
   test("stop is a no-op when no session is running", async () => {
@@ -77,8 +83,11 @@ suite("Quoll extension", () => {
   // The only test that needs a real run: hover values come from the live
   // Aggregator, so this covers the whole path (run → capture → siteAt → hover)
   // that neither the Deno unit tests (no vscode) nor the eval harness (no
-  // editor) can reach. Needs Deno on PATH, as CI provides.
-  test("hover shows the value captured at that expression", async () => {
+  // editor) can reach. It therefore needs the native core AND Deno — the
+  // cross-OS matrix has neither, so there it skips and the ubuntu job that
+  // builds both runs it for real.
+  test("hover shows the value captured at that expression", async function () {
+    if (!hasNativeCore()) return this.skip();
     const doc = await vscode.workspace.openTextDocument({
       language: "typescript",
       content: "const answer = 6 * 7;\n",
@@ -109,6 +118,26 @@ suite("Quoll extension", () => {
     assert.strictEqual(revealed, true, "Explore Value should reveal the site in the values tree");
   });
 });
+
+/**
+ * Without the napi binary the pipeline falls back to identity instrumentation
+ * (no capture sites, so no values and no hover) — a skip, not a failure.
+ *
+ * The skip is the one way this test could quietly stop testing anything, so
+ * the CI job that DOES build the core sets QUOLL_REQUIRE_NATIVE=1: there, a
+ * missing binary is a failure. Otherwise a renamed build output would leave
+ * the only end-to-end editor test silently skipped and CI green.
+ */
+function hasNativeCore(): boolean {
+  const root = vscode.extensions.getExtension(EXTENSION_ID)?.extensionPath;
+  const found =
+    root !== undefined &&
+    existsSync(join(root, "native", `quoll-core.${process.platform}-${process.arch}.node`));
+  if (!found && process.env.QUOLL_REQUIRE_NATIVE === "1") {
+    assert.fail("QUOLL_REQUIRE_NATIVE=1 but the native core is missing — did build:core move?");
+  }
+  return found;
+}
 
 function hoverText(hover: vscode.Hover): string {
   return hover.contents.map((c) => (typeof c === "string" ? c : c.value)).join("\n");

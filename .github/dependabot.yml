@@ -7,6 +7,12 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # @types/vscode is a compatibility FLOOR, not a dependency: it must match
+      # engines.vscode (vsce refuses to package when the types are newer), and
+      # raising it drops support for older VS Code builds for no gain. Bump it
+      # deliberately, together with engines.vscode, or not at all.
+      - dependency-name: "@types/vscode"
     groups:
       npm-minor-patch:
         update-types:

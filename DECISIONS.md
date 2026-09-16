@@ -17,6 +17,43 @@ future regression fails a test, not just memory.
 
 ---
 
+## 2026-09-16 — Gap 2 closed: the async wait ceiling is `quoll.runTimeoutMs` [DECIDED]
+
+- **Context:** "Gap 2 — Async wait budget" above set the direction (wait for
+  outstanding timers, bounded by the run timeout) and the runner half-did it:
+  it stays alive while timers are pending, but under a hard-coded
+  `ASYNC_MAX_MS = 5000`. The 10s `setTimeout` from the original Quokka
+  comparison — the very case that motivated the decision — still gave up at 5s.
+- **Decision:** The ceiling is configurable (`quoll.runTimeoutMs`, default 10s,
+  clamped 100ms–10min in the runner) and the host passes it to the runner as
+  **argv[0]**, not as a `run` field: `protocol/ipc.ts` is frozen, and
+  `Deno.args` costs no sandbox permission (an env var would need
+  `--allow-env`). The 200ms poll interval stays internal and was renamed
+  `ASYNC_POLL_MS` — the spec's `asyncGraceMs` *quiet-window* framing is retired,
+  since what a user wants to tune is how long to wait, not how often we look.
+- **Rejected:**
+  - *Adding a timeout field to the `run` message* — a breaking protocol change
+    for something that is process invocation, not protocol.
+  - *An env var* — widens the sandbox (`--allow-env`) for no gain.
+  - *Leaving 5s* — it contradicts the recorded decision and the reference
+    behavior.
+  - Left at the default **window** scope, unlike `denoPath`: the ceiling is a
+    resource knob, not a trust boundary (it can't redirect or widen the
+    sandbox, and the next run kills the process), and a project with slow
+    async is exactly who should be able to raise it in workspace settings.
+- **Revisit if:** a run that legitimately waits the full ceiling makes the
+  editor feel stuck. It shouldn't: `runId` cancellation means the next
+  keystroke kills the in-flight run, so the wait only costs something when the
+  user has stopped typing.
+- **Covered by:** `scripts/timeout-check.mjs` (`pnpm run check:timeout`), which
+  runs the runner under a small ceiling and asserts both sides — a 700ms timer
+  is waited out and re-emitted as `then 42` with `update: true` and
+  `exit: complete`, while a never-quiet interval exits `timeout` at the ceiling.
+  Note a SILENT `setInterval` is deliberately untracked and does not hold a run
+  open (see `patchTimers`).
+
+---
+
 ## 2026-09-16 — Value Peek phase A: hover values, no re-run [DECIDED]
 
 - **Context:** The shelved "Value Peek (Quokka Pro parity)" item in `LOG.md`.

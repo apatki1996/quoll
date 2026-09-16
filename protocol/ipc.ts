@@ -54,10 +54,11 @@ export type RunnerEvent =
   | { t: "error"; message: string; stack?: string; siteId?: number }
   /**
    * Sync run + microtask flush complete. Late async `value`/`console`
-   * messages MAY still follow until `exit`: the runner stays alive for a
-   * quiet-window grace period (config `asyncGraceMs`) so settling
-   * Promises/timers can re-emit, then sends `exit`. The host renders at
-   * `done` and patches as late values arrive.
+   * messages MAY still follow until `exit`: the runner stays alive while
+   * timers/promises are still pending so they can re-emit, bounded by the
+   * run-timeout ceiling (config `runTimeoutMs`), then sends `exit`. The host
+   * renders at `done` and patches as late values arrive. (The earlier
+   * `asyncGraceMs` quiet-window framing was retired — see DECISIONS "Gap 2".)
    */
   | { t: "done"; durationMs: number }
   /** `entries` is empty when `error` is set ("evicted": LRU-dropped under the

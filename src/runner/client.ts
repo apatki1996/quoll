@@ -42,6 +42,13 @@ export type StartRunOpts = {
    * Absent = deny-all (no imports).
    */
   projectRoot?: string;
+  /**
+   * How long the runner may wait, after the synchronous run finishes, for
+   * outstanding timers/promises to settle before it gives up ("timeout").
+   * Passed as a CLI arg — the `run` message is a frozen interface, and
+   * `Deno.args` costs no sandbox permission.
+   */
+  runTimeoutMs: number;
   onMessage: (msg: RunnerMsg) => void;
   /** Runner stderr (diagnostics) and spawn/parse failures. */
   onDiagnostic: (text: string) => void;
@@ -66,7 +73,7 @@ export function startRun(opts: StartRunOpts): RunHandle {
     "--sloppy-imports",
   ];
   if (opts.projectRoot) args.push(`--allow-read=${opts.projectRoot}`);
-  args.push(opts.runnerMain);
+  args.push(opts.runnerMain, String(opts.runTimeoutMs));
   const child = spawn(opts.denoPath, args, {
     stdio: ["pipe", "pipe", "pipe"],
     cwd: opts.projectRoot,

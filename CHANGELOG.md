@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that expression in the Quoll Values tree.
 - **Full text on truncated inline values** — an inline decoration clipped at 120
   characters now carries the untruncated text as a hover instead of dropping it.
+- **`quoll.runTimeoutMs`** — how long a run keeps waiting for outstanding
+  timers and promises to settle (default 10s, was a hard-coded 5s). Quoll stays
+  alive while they're pending, so a slow `setTimeout` now reports its value
+  instead of leaving `Promise { <pending> }` on the line; the setting is the
+  ceiling that stops a never-quiet run.
 - **Live comments** — annotate a line with `//?` to mark its value as an
   explicit "show me this" (Phase 8). Pairs with the new `quoll.values` setting:
   set it to `comments` for a quiet mode that shows inline values only on

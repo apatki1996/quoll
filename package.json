@@ -7,13 +7,26 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/apatki/quoll"
+    "url": "https://github.com/apatki1996/quoll"
   },
+  "bugs": {
+    "url": "https://github.com/apatki1996/quoll/issues"
+  },
+  "homepage": "https://github.com/apatki1996/quoll#readme",
   "engines": {
     "vscode": "^1.96.0"
   },
   "categories": [
-    "Other"
+    "Programming Languages",
+    "Debuggers",
+    "Visualization"
+  ],
+  "keywords": [
+    "scratchpad",
+    "repl",
+    "live",
+    "inline values",
+    "quokka"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -84,6 +97,13 @@
           "default": 300,
           "description": "Delay after the last edit before re-running the file."
         },
+        "quoll.runTimeoutMs": {
+          "type": "number",
+          "default": 10000,
+          "minimum": 200,
+          "maximum": 600000,
+          "description": "How long a run may keep waiting for outstanding timers and promises to settle before it gives up. Quoll stays alive while they are pending — a setTimeout of 8s still shows its value — so this is the ceiling that stops a setInterval from running forever."
+        },
         "quoll.values": {
           "type": "string",
           "enum": [
@@ -115,6 +135,8 @@
     "check:phase3": "node scripts/phase3-check.mjs",
     "check:phase5": "node scripts/phase5-check.mjs",
     "check:bundle": "node scripts/check-native-bundle.mjs",
+    "check:timeout": "node scripts/timeout-check.mjs",
+    "test:unit": "deno check runner/main.ts && deno test --allow-read --allow-write --allow-run --allow-env --allow-sys src/render src/instrument src/runner runner",
     "eval": "node eval/run.mjs",
     "fmt": "oxfmt && cargo fmt --manifest-path crates/quoll-core/Cargo.toml",
     "fmt:check": "oxfmt --check && cargo fmt --manifest-path crates/quoll-core/Cargo.toml --check",
@@ -125,7 +147,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "^26.3.0",
-    "@types/vscode": "^1.134.0",
+    "@types/vscode": "~1.96.0",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.1.0",
     "esbuild": "^0.28.2",

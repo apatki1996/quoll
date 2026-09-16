@@ -77,6 +77,10 @@ async function runCase(file) {
     code: prepared.code,
     entry: file,
     projectRoot: dirname(file),
+    // The harness runs the host's exact spawn, so it passes what the host
+    // passes — a runner arg dropped here would go unnoticed (this file is
+    // .mjs, outside tsconfig, so StartRunOpts isn't enforced).
+    runTimeoutMs: 10_000,
     onMessage: (msg) => {
       agg.ingest(msg);
       // The runner lingers after `exit` to serve expand (phase 5); the

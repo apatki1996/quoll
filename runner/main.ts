@@ -17,11 +17,28 @@
 import type { ConsoleLevel, HostMsg, RunnerEvent, RunnerMsg } from "../protocol/index.ts";
 import { expandObject, settledPromiseValue, toRemoteValue } from "./serialize.ts";
 
-// TODO(config): expose as `asyncGraceMs` per the spec's run-completion semantics.
-const ASYNC_GRACE_MS = 200;
-// Hard cap on the post-`done` quiet window, so a setInterval can't keep the
-// run alive indefinitely. Hitting it exits with reason "timeout".
-const ASYNC_MAX_MS = 5000;
+// Poll interval of the post-`done` wait loop. Internal: the spec's
+// `asyncGraceMs` quiet-window framing was retired (see DECISIONS "Gap 2") —
+// what the user configures is the CEILING below, not how often we look.
+const ASYNC_POLL_MS = 200;
+/**
+ * Ceiling on the post-`done` wait, passed by the host as argv[0] (a CLI arg,
+ * not a `run` field: the protocol is frozen, and Deno.args needs no
+ * permission). Quoll stays alive while user timers/promises are pending, so
+ * this is what stops a `setInterval` from running forever — hitting it exits
+ * with reason "timeout". Default matches `quoll.runTimeoutMs`.
+ */
+const RUN_TIMEOUT_MS = runTimeoutFromArgs();
+
+function runTimeoutFromArgs(): number {
+  const ms = Number(Deno.args[0]);
+  // A missing/garbage arg must not disable the ceiling, and a hostile one must
+  // not pin the process open: fall back, then clamp.
+  if (!Number.isFinite(ms) || ms <= 0) return 10_000;
+  // Floor is the poll interval, not something smaller: the loop sleeps once
+  // before its first quiet check, so a ceiling below that can't be observed.
+  return Math.min(Math.max(ms, ASYNC_POLL_MS), 600_000);
+}
 
 let runId = -1;
 let seq = 0;
@@ -75,7 +92,7 @@ function sleep(ms: number): Promise<void> {
  * Count outstanding user setTimeouts so the quiet window can extend on
  * PENDING timers, not just recent emissions — an isolated setTimeout(cb, 250)
  * must survive a 200ms quiet check. setInterval is deliberately untracked
- * (never settles); its ticks extend the window via `seq` until ASYNC_MAX_MS.
+ * (never settles); its ticks extend the window via `seq` until RUN_TIMEOUT_MS.
  */
 type TimerId = ReturnType<typeof globalThis.setTimeout>;
 
@@ -107,7 +124,7 @@ function patchTimers(): void {
   }) as typeof globalThis.clearTimeout;
   // Timeouts and intervals share an id space, so clearInterval(timeoutId)
   // clears a tracked timer too — it must maintain the pending count or the
-  // quiet window would hang until ASYNC_MAX_MS. (live never contains interval
+  // quiet window would hang until RUN_TIMEOUT_MS. (live never contains interval
   // ids; setInterval is untracked, see above.)
   const origClearInterval = globalThis.clearInterval.bind(globalThis);
   globalThis.clearInterval = ((id?: TimerId) => {
@@ -260,14 +277,15 @@ async function handleRun(msg: Extract<HostMsg, { t: "run" }>): Promise<void> {
   flushCover();
   send({ t: "done", durationMs: Math.round(performance.now() - start) });
 
-  // QUIET window (per spec): the run stays alive while events keep arriving
-  // OR user timers are still pending, so isolated long timers and chains both
-  // survive; ASYNC_MAX_MS caps it (setInterval exits here as "timeout").
+  // The run stays alive while events keep arriving OR user timers are still
+  // pending, so isolated long timers and chains both survive — Quokka waits
+  // for outstanding timers and we match it (DECISIONS "Gap 2").
+  // RUN_TIMEOUT_MS caps it (setInterval exits here as "timeout").
   const graceStart = performance.now();
   let lastSeq = seq;
   let reason: "complete" | "timeout" = "timeout";
-  while (performance.now() - graceStart < ASYNC_MAX_MS) {
-    await sleep(ASYNC_GRACE_MS);
+  while (performance.now() - graceStart < RUN_TIMEOUT_MS) {
+    await sleep(ASYNC_POLL_MS);
     if (seq === lastSeq && pendingTimers === 0) {
       reason = "complete";
       break;
