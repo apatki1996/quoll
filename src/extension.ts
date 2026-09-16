@@ -13,10 +13,14 @@ export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel(OUTPUT_CHANNEL);
   extensionRoot = context.extensionUri.fsPath;
   explorer = new ValueExplorer();
+  // A TreeView (not just a registered provider) because Explore Value reveals
+  // the hovered site in it.
+  const valuesView = vscode.window.createTreeView(Views.values, { treeDataProvider: explorer });
+  explorer.setView(valuesView);
   context.subscriptions.push(
     output,
     explorer,
-    vscode.window.registerTreeDataProvider(Views.values, explorer),
+    valuesView,
     vscode.commands.registerCommand(Commands.start, startOnCurrentFile),
     vscode.commands.registerCommand(Commands.stop, () => {
       stopSession();
@@ -26,6 +30,9 @@ export function activate(context: vscode.ExtensionContext): void {
       const text = explorer.copyText(node as Parameters<ValueExplorer["copyText"]>[0]);
       if (text !== undefined) void vscode.env.clipboard.writeText(text);
     }),
+    vscode.commands.registerCommand(Commands.exploreValue, (siteId: number) =>
+      explorer.reveal(siteId),
+    ),
   );
   output.appendLine("[quoll] activated");
 }

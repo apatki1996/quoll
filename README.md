@@ -5,6 +5,7 @@ A free, open-source live scratchpad for VS Code — an alternative to [Quokka.js
 Quoll runs your JavaScript/TypeScript as you type and shows what your code actually does, right in the editor:
 
 - **Inline values** — expression results and variable values appear next to the code that produced them
+- **Value peek** — hover an expression to see what it evaluated to, and jump from there into the value explorer
 - **Live code coverage** — gutter indicators show which lines ran, didn't run, or partially ran
 - **Inline runtime errors** — exceptions and unhandled rejections surface on the line that threw them
 - **Console output** — `console.log` results render inline at the call site

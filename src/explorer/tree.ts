@@ -12,7 +12,7 @@ import type { ExpandOutcome, QuollSession } from "../session.ts";
 
 type Node =
   /** One capture site; `values` is its capture history (latest last). */
-  | { kind: "site"; line: number; values: RemoteValue[] }
+  | { kind: "site"; siteId: number; line: number; values: RemoteValue[] }
   /** One value: an individual capture (`#n`) or an expansion entry (key). */
   | { kind: "value"; label: string; value: RemoteValue }
   /** Non-interactive placeholder (expansion errors). */
@@ -23,6 +23,12 @@ export class ValueExplorer implements vscode.TreeDataProvider<Node>, vscode.Disp
   readonly onDidChangeTreeData = this.changeEmitter.event;
   private session: QuollSession | undefined;
   private sessionSub: vscode.Disposable | undefined;
+  private view: vscode.TreeView<Node> | undefined;
+
+  /** The view this provider backs — needed for `reveal` (Explore Value). */
+  setView(view: vscode.TreeView<Node>): void {
+    this.view = view;
+  }
 
   setSession(session: QuollSession | undefined): void {
     this.sessionSub?.dispose();
@@ -37,6 +43,9 @@ export class ValueExplorer implements vscode.TreeDataProvider<Node>, vscode.Disp
         const latest = node.values[node.values.length - 1]!;
         const expandable = node.values.length > 1 || latest.objectId !== undefined;
         const item = new vscode.TreeItem(latest.preview, collapsible(expandable));
+        // Stable id so `reveal` can find a root it didn't hand out itself
+        // (getChildren rebuilds the node objects on every refresh).
+        item.id = `site:${node.siteId}`;
         item.description =
           `line ${node.line}` + (node.values.length > 1 ? ` · ×${node.values.length}` : "");
         item.tooltip = latest.preview;
@@ -63,7 +72,7 @@ export class ValueExplorer implements vscode.TreeDataProvider<Node>, vscode.Disp
     if (!node) {
       return this.session
         .valueRoots()
-        .map((r) => ({ kind: "site" as const, line: r.line, values: r.values }));
+        .map((r) => ({ kind: "site" as const, siteId: r.siteId, line: r.line, values: r.values }));
     }
     if (node.kind === "site") {
       if (node.values.length > 1) {
@@ -77,6 +86,23 @@ export class ValueExplorer implements vscode.TreeDataProvider<Node>, vscode.Disp
     }
     if (node.kind === "value") return this.expandValue(node.value);
     return [];
+  }
+
+  /** Roots are the only reveal target (Explore Value), so parents are roots'. */
+  getParent(): Node | undefined {
+    return undefined;
+  }
+
+  /**
+   * Explore Value: select the capture site the hover was showing. Returns
+   * whether it landed — a stale id (the run moved on) is a no-op for the user,
+   * but the command's result is what lets a test tell the two apart.
+   */
+  async reveal(siteId: number): Promise<boolean> {
+    const root = (await this.getChildren()).find((n) => n.kind === "site" && n.siteId === siteId);
+    if (!root || !this.view) return false;
+    await this.view.reveal(root, { select: true, focus: true, expand: true });
+    return true;
   }
 
   /** What `quoll.copyValue` puts on the clipboard for this node. */

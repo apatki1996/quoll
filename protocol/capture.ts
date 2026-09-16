@@ -44,7 +44,11 @@ export type InstrumentOpts = {
 
 export type CaptureSite = {
   id: number;
-  /** Original-source span (pre-instrumentation). 1-based lines, 0-based columns. */
+  /**
+   * Original-source span (pre-instrumentation). 1-based lines, 0-based
+   * columns, END EXCLUSIVE (`endLine`/`endColumn` point at the character after
+   * the expression — Oxc spans are half-open and are emitted unadjusted).
+   */
   line: number;
   column: number;
   endLine: number;

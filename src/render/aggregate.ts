@@ -12,9 +12,20 @@
 import type { RemoteValue, RunnerEvent } from "../../protocol/index.ts";
 
 export type CoverageState = "covered" | "uncovered" | "partial";
+/** A capture site's source span + kind (structural subset of `CaptureSite`). */
 export interface SiteInfo {
   line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
   kind: string;
+}
+
+/** One value site's capture history, with the span that located it (hover). */
+export interface SiteValues {
+  siteId: number;
+  site: SiteInfo;
+  values: RemoteValue[];
 }
 
 /**
@@ -31,6 +42,23 @@ const OPT_IN_KINDS = new Set(["comment", "selection", "logpoint"]);
 
 /** Per-site / per-line cap so a hot loop can't grow render state unbounded. */
 const MAX_VALUES = 100;
+
+/**
+ * Is (line, column) inside a site's span? 1-based lines, 0-based columns, and
+ * the END IS EXCLUSIVE — Oxc spans are half-open, so `endColumn` is already the
+ * character after the expression. An inclusive test would match `;` for
+ * `x = f()` and hand the hover the wrong (outer) site at every boundary.
+ */
+function covers(site: SiteInfo, line: number, column: number): boolean {
+  const afterStart = line > site.line || (line === site.line && column >= site.column);
+  const beforeEnd = line < site.endLine || (line === site.endLine && column < site.endColumn);
+  return afterStart && beforeEnd;
+}
+
+/** Does `a` start later than `b`? (Innermost-wins tiebreak for nested spans.) */
+function startsAfter(a: SiteInfo, b: SiteInfo): boolean {
+  return a.line > b.line || (a.line === b.line && a.column > b.column);
+}
 
 /** `//?.` timing: sub-ms gets 2 decimals, otherwise whole milliseconds. */
 function formatDuration(ms: number): string {
@@ -156,11 +184,30 @@ export class Aggregator {
   }
 
   /** Explorer roots: captured values by source line (value sites only), sorted. */
-  valueSites(): { line: number; values: RemoteValue[] }[] {
-    const roots: { line: number; values: RemoteValue[] }[] = [];
-    for (const { line, values } of this.siteValues.values()) {
-      if (values.length > 0) roots.push({ line, values: [...values] });
+  valueSites(): { siteId: number; line: number; values: RemoteValue[] }[] {
+    const roots: { siteId: number; line: number; values: RemoteValue[] }[] = [];
+    for (const [siteId, { line, values }] of this.siteValues) {
+      if (values.length > 0) roots.push({ siteId, line, values: [...values] });
     }
     return roots.sort((a, b) => a.line - b.line);
+  }
+
+  /**
+   * Innermost value site whose span covers a position (1-based line, 0-based
+   * column) — the hover's lookup. Deliberately ignores `valuesMode`: a hover
+   * is an explicit ask, so quiet mode suppresses inline values, not hovered
+   * ones. No re-run and no re-eval; this reads what the run already reported.
+   */
+  siteAt(line: number, column: number): SiteValues | undefined {
+    let best: SiteValues | undefined;
+    for (const [siteId, entry] of this.siteValues) {
+      if (entry.values.length === 0) continue;
+      const site = this.sites.get(siteId);
+      if (!site || !covers(site, line, column)) continue;
+      if (!best || startsAfter(site, best.site)) {
+        best = { siteId, site, values: [...entry.values] };
+      }
+    }
+    return best;
   }
 }

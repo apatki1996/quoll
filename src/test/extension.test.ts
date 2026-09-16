@@ -73,4 +73,54 @@ suite("Quoll extension", () => {
       "scratch buffer should contain the template",
     );
   });
+
+  // The only test that needs a real run: hover values come from the live
+  // Aggregator, so this covers the whole path (run → capture → siteAt → hover)
+  // that neither the Deno unit tests (no vscode) nor the eval harness (no
+  // editor) can reach. Needs Deno on PATH, as CI provides.
+  test("hover shows the value captured at that expression", async () => {
+    const doc = await vscode.workspace.openTextDocument({
+      language: "typescript",
+      content: "const answer = 6 * 7;\n",
+    });
+    await vscode.window.showTextDocument(doc);
+    await vscode.commands.executeCommand("quoll.start");
+
+    const inside = new vscode.Position(0, 16); // inside `6 * 7`
+    const hover = await waitFor(async () => {
+      const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+        "vscode.executeHoverProvider",
+        doc.uri,
+        inside,
+      );
+      return hovers.find((h) => hoverText(h).includes("42"));
+    });
+    assert.ok(hover, "expected a Quoll hover showing 42");
+    // The hover's Explore Value link carries the site id; following it must
+    // actually reveal that site in the tree. The command reports whether it
+    // landed, so a lost root, a missing view, or a dropped id fails here
+    // instead of silently doing nothing.
+    const siteId = hoverText(hover).match(/exploreValue\?%5B(\d+)%5D/)?.[1];
+    assert.ok(siteId, "hover should offer an Explore Value command link");
+    const revealed = await vscode.commands.executeCommand<boolean>(
+      "quoll.exploreValue",
+      Number(siteId),
+    );
+    assert.strictEqual(revealed, true, "Explore Value should reveal the site in the values tree");
+  });
 });
+
+function hoverText(hover: vscode.Hover): string {
+  return hover.contents.map((c) => (typeof c === "string" ? c : c.value)).join("\n");
+}
+
+/** Poll until `attempt` yields something, or give up (a run takes ~a second). */
+async function waitFor<T>(attempt: () => Promise<T | undefined>): Promise<T | undefined> {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const result = await attempt();
+    if (result !== undefined) return result;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return undefined;
+}

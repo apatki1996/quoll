@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Value peek** — hover any expression to see the value it produced, with each
+  capture listed for a line that ran more than once. Reads the current run's
+  values (no re-run), works in quiet mode, and offers *Explore value* to reveal
+  that expression in the Quoll Values tree.
+- **Full text on truncated inline values** — an inline decoration clipped at 120
+  characters now carries the untruncated text as a hover instead of dropping it.
 - **Live comments** — annotate a line with `//?` to mark its value as an
   explicit "show me this" (Phase 8). Pairs with the new `quoll.values` setting:
   set it to `comments` for a quiet mode that shows inline values only on

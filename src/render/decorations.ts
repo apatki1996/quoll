@@ -13,6 +13,23 @@ function truncate(text: string): string {
   return cut + "…";
 }
 
+/**
+ * An end-of-line decoration, with the untruncated text as a hover so the
+ * dropped tail is still reachable. Only when it IS truncated: an unconditional
+ * hoverMessage would double up with the value hover (src/hover.ts) on every
+ * line. Console/error text has no capture site, so this is its only hover.
+ */
+function decoration(range: vscode.Range, text: string): vscode.DecorationOptions {
+  const shown = truncate(text);
+  return {
+    range,
+    renderOptions: { after: { contentText: shown } },
+    ...(shown === text
+      ? {}
+      : { hoverMessage: new vscode.MarkdownString().appendCodeblock(text, "text") }),
+  };
+}
+
 function gutterIcon(color: string): vscode.Uri {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect x="10" y="6" width="7" height="20" rx="2" fill="${color}"/></svg>`;
   return vscode.Uri.parse(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
@@ -92,20 +109,14 @@ export class Renderer implements vscode.Disposable {
     for (const [line, previews] of this.values) {
       const range = this.lineEnd(line);
       if (!range) continue; // line vanished since the run started; rerun is imminent
-      valueDecos.push({
-        range,
-        renderOptions: { after: { contentText: truncate(previews.join(", ")) } },
-      });
+      valueDecos.push(decoration(range, previews.join(", ")));
     }
 
     const errorDecos: vscode.DecorationOptions[] = [];
     for (const [line, message] of this.errors) {
       const range = this.lineEnd(line);
       if (!range) continue;
-      errorDecos.push({
-        range,
-        renderOptions: { after: { contentText: truncate(`✗ ${message}`) } },
-      });
+      errorDecos.push(decoration(range, `✗ ${message}`));
     }
 
     const coverageDecos: Record<CoverageState, vscode.Range[]> = {

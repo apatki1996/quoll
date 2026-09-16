@@ -4,7 +4,8 @@ import type { RemoteValue, RunnerMsg } from "../protocol/index.ts";
 import { config } from "./configuration.ts";
 import { EXTENSION_ID } from "./constants.ts";
 import { prepareRun } from "./instrument/index.ts";
-import { Aggregator } from "./render/aggregate.ts";
+import { registerValueHover } from "./hover.ts";
+import { Aggregator, type SiteValues } from "./render/aggregate.ts";
 import { Renderer } from "./render/decorations.ts";
 import { startRun, type RunHandle } from "./runner/client.ts";
 import { stageRunner } from "./runner/stage.ts";
@@ -60,6 +61,7 @@ export class QuollSession implements vscode.Disposable {
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration(`${EXTENSION_ID}.values`)) this.scheduleRun();
       }),
+      registerValueHover(doc, (line, column) => this.siteAt(line, column)),
     );
     this.runNow();
   }
@@ -190,8 +192,13 @@ export class QuollSession implements vscode.Disposable {
   }
 
   /** Explorer roots: the current run's captured values, by source line. */
-  valueRoots(): { line: number; values: RemoteValue[] }[] {
+  valueRoots(): { siteId: number; line: number; values: RemoteValue[] }[] {
     return this.agg?.valueSites() ?? [];
+  }
+
+  /** Hover lookup: values captured at the innermost site covering a position. */
+  siteAt(line: number, column: number): SiteValues | undefined {
+    return this.agg?.siteAt(line, column);
   }
 
   private failPendingExpands(): void {

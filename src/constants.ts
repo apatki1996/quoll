@@ -11,6 +11,7 @@ export const Commands = {
   start: "quoll.start",
   stop: "quoll.stop",
   copyValue: "quoll.copyValue",
+  exploreValue: "quoll.exploreValue",
 } as const;
 
 /** View IDs from `contributes.views`. */

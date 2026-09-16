@@ -17,6 +17,50 @@ future regression fails a test, not just memory.
 
 ---
 
+## 2026-09-16 — Value Peek phase A: hover values, no re-run [DECIDED]
+
+- **Context:** The shelved "Value Peek (Quokka Pro parity)" item in `LOG.md`.
+  Every expression is already a capture site with a full source span, so a
+  hover can answer "what was this?" from state the run already reported. The
+  same note flagged a smaller bug: the inline decoration truncates at 120 chars
+  and silently drops the tail.
+- **Decision:** Build phase A only — `Aggregator.siteAt(line, column)` returns
+  the *innermost* value site whose span covers the position, a `HoverProvider`
+  (`src/hover.ts`) renders its capture history, and the hover carries an
+  `Explore value` command link that reveals that site in the existing Quoll
+  Values tree (`quoll.exploreValue` → `TreeView.reveal`, which is why the view
+  is now created with `createTreeView` and roots carry stable `site:<id>` ids).
+  No re-run, no re-eval, no new instrumentation, no protocol change.
+  - Site spans are half-open (Oxc `Span.end` is emitted unadjusted), so the
+    hover test is `column < endColumn`; an inclusive test matched the character
+    *after* an expression and handed boundary positions to the outer site.
+    `protocol/capture.ts` now says so on `CaptureSite` (comment only — the
+    frozen shape is unchanged).
+  - The hover ignores `quoll.values: "comments"`: quiet mode suppresses
+    *unrequested* inline values, and a hover is a request.
+  - Decoration `hoverMessage` is attached **only when the text was truncated**,
+    so it doesn't double up with the value hover on every line. It is the only
+    hover for console/error text, which is line-attributed and has no site.
+- **Rejected:**
+  - *Expanding objects inside the hover* (deep-serialize on hover) — the
+    explorer already does lazy `expand`; the link reuses it for free.
+  - *Phase B (`quoll.inlineValues: "always" | "hover"`)* and *phase C
+    (value-on-selection via the dormant `selection` ExtraSite)* — B is a
+    clutter-reduction setting worth having only once the hover has been lived
+    with; C is the only phase that touches the native boundary.
+  - *Widening `SiteInfo` with optional span fields* — sites always have spans
+    in production, so the fields are required and the unit tests build sites
+    through a helper.
+- **Revisit if:** hovering a hot loop's line feels heavy (the hover caps at the
+  last 20 captures and summarizes the rest), or users ask for the value without
+  the inline clutter — that's phase B, not a redesign.
+- **Covered by:** `siteAt` unit test in `src/render/aggregate_test.ts`
+  (innermost-wins, quiet mode) + an integration test in
+  `src/test/extension.test.ts` that runs a real session and follows the hover's
+  Explore Value link (the only test that exercises run → capture → hover).
+
+---
+
 ## 2026-06-19 — Phase 8 live comments: `//?`, `//?.`, and quiet mode [DECIDED]
 
 - **Context:** Phase 8's first slice. Quokka's `//?` shows a line's value and
