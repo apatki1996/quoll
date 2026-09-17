@@ -23,7 +23,7 @@ Checkout some [more examples](./examples/EXAMPLES.md).
 
 Quoll is in early, active development and is **not on the marketplace yet** — you run it from source (below).
 
-Everything in the list above works today, for single-file scratchpads. The roadmap (see [`quoll-spec.md`](quoll-spec.md), whose "Where the build actually is" section tracks what's done) targets full feature parity with Quokka.js: a browser-like jsdom runtime, logpoints, the time machine, interactive timeline and value graphs, CPU profiling, and more.
+Everything in the list above works today, for single-file scratchpads. The roadmap (see [`quoll-spec.md`](quoll-spec.md), whose "Where the build actually is" section tracks what's done) targets full feature parity with Quokka.js: a browser-like jsdom runtime, the time machine, interactive timeline and value graphs, CPU profiling, and more.
 
 ## How it works
 

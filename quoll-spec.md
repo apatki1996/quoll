@@ -300,19 +300,23 @@ Kept current so the roadmap above reads as a plan, not a to-do list. The two
 highest-risk seams remain the source-map mapping and the serialization
 protocol — that is where a change looks right and is subtly wrong.
 
-**Done:** phases 0–6 and 8. Single-file JS/TS scratchpads run as you type with
-inline values, coverage (incl. partial), inline errors, inline `console.log`,
-the value explorer with lazy `expand`, project imports with a transitive watch
-graph, and live comments (`//?`, `//?.`, plus `quoll.values: "comments"` quiet
-mode). Phase 7's hardening landed piecemeal; **jsdom has not been attempted**.
+**Done:** phases 0–6, 8 and 9. Single-file JS/TS scratchpads run as you type
+with inline values, coverage (incl. partial), inline errors, inline
+`console.log`, the value explorer with lazy `expand`, project imports with a
+transitive watch graph, live comments (`//?`, `//?.`, plus `quoll.values:
+"comments"` quiet mode), and — in quiet mode — value-on-selection and logpoints,
+both produced through `InstrumentOpts.extraSites`. Phase 7's hardening landed
+piecemeal; **jsdom has not been attempted**.
 
 Beyond the numbered phases: **Value Peek phase A** — hover an expression to see
-its captured value, with *Explore value* revealing it in the tree. Phases B
-(`inlineValues: "always" | "hover"`) and C (value-on-selection, the only piece
-that touches the native boundary) are deliberately deferred.
+its captured value, with *Explore value* revealing it in the tree. Phase C
+(value-on-selection) shipped with phase 9, which needed the same native
+`extraSites` work. Phase B (`inlineValues: "always" | "hover"`) is deliberately
+deferred.
 
-**Not started:** phases 9–15, and jsdom. Phases 9–11 stay cheap because the
-protocol pre-paid for them (`kind`, `extraSites`, the `runId`/`seq` event log).
+**Not started:** phases 10–15, and jsdom. Phases 10–11 stay cheap because the
+protocol pre-paid for them (`kind`, the `runId`/`seq` event log) — phase 9 bore
+that out, costing one core commit and no protocol change.
 
 **Known limitations** (each with a `DECISIONS.md` entry): out-of-order
 settlement of several promises captured at ONE site can mis-slot; Copy Value
@@ -322,11 +326,12 @@ copies the rendered preview, not a deep serialization.
 manifest packages cleanly (`vsce package`), but the VSIX carries only the host
 platform's napi binary, so a real release needs per-target builds.
 
-**Parked work:** the branch `claude/merge-dependabot-prs-nofliv` holds unmerged
-commits for phase 9 (logpoints) and Value Peek phase C (value-on-selection),
-plus a Rust toolchain pin. It predates the oxc 0.143→0.147 moves and would need
-a rebase; one of its commits also clears dependency advisories that were left
-open deliberately.
+**Parked work:** the branch `claude/merge-dependabot-prs-nofliv` still holds a
+Rust toolchain pin (`rust-toolchain.toml` + crate MSRV), worth picking up so
+`cargo clippy -- -D warnings` stops floating with `stable`. Its phase 9 /
+value-on-selection commit has been cherry-picked onto main; its remaining commit
+clears dependency advisories that were left open deliberately, so do not take
+it wholesale.
 
 **Where the rest of the state lives:** `DECISIONS.md` is the running journal of
 *why* (read it before reopening a settled question — several entries record

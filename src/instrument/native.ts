@@ -12,6 +12,8 @@ export type NativeBinding = {
       jsx: boolean;
       /** Specifier → replacement, applied at the AST level before codegen. */
       rewrites?: Record<string, string>;
+      /** Caller-supplied capture positions, columns already in BYTES. */
+      extraSites?: { line: number; column: number; kind: string }[];
     },
   ): {
     code: string;

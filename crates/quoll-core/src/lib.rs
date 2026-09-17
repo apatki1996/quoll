@@ -22,7 +22,23 @@ use oxc_span::SourceType;
 use oxc_transformer::{TransformOptions, Transformer};
 
 use imports::{ImportRewriter, RequestCollector};
-use instrument::Instrumenter;
+use instrument::{Annotations, Instrumenter};
+
+/// A caller-supplied capture position (protocol `ExtraSite`). This is the
+/// entire mechanism behind value-on-selection (Phase 8) and Logpoints
+/// (Phase 9): both are ordinary value captures that differ only in what
+/// ASKED for them.
+#[napi(object)]
+pub struct NapiExtraSite {
+    /// 1-based source line.
+    pub line: u32,
+    /// 0-based BYTE column. VS Code counts UTF-16 code units, so the host
+    /// converts before calling (see `prepareRun`) — this is the same
+    /// coordinate space `NapiCaptureSite.column` reports back.
+    pub column: u32,
+    /// "logpoint" | "selection" (protocol `ExtraSiteKind`).
+    pub kind: String,
+}
 
 #[napi(object)]
 pub struct InstrumentOpts {
@@ -32,6 +48,9 @@ pub struct InstrumentOpts {
     /// AST level before codegen. The host builds this from `list_imports`
     /// output (Phase 6 import resolution). Absent/empty = no rewriting.
     pub rewrites: Option<HashMap<String, String>>,
+    /// Extra capture positions the caller wants tagged as opt-in, so quiet
+    /// mode reveals them. Absent/empty = source annotations only.
+    pub extra_sites: Option<Vec<NapiExtraSite>>,
 }
 
 #[napi(object)]
@@ -42,8 +61,8 @@ pub struct NapiCaptureSite {
     pub column: u32,
     pub end_line: u32,
     pub end_column: u32,
-    /// "expr" | "statement" | "branch" | "comment" | "perf"
-    /// (see protocol CaptureSiteKind).
+    /// "expr" | "statement" | "branch" | "comment" | "perf" | "logpoint"
+    /// | "selection" (see protocol CaptureSiteKind).
     pub kind: String,
 }
 
@@ -112,6 +131,32 @@ fn collect_annotations(source: &str, comments: &[Comment]) -> (HashSet<u32>, Has
     (perf, comment)
 }
 
+/// Merge the source-derived annotations with the caller's `extra_sites` into
+/// the single input the pass reads. An unrecognized kind is DROPPED rather
+/// than failing the run: `extra_sites` comes from editor state (a breakpoint,
+/// a selection) that must never be able to break instrumentation.
+fn build_annotations(
+    perf_lines: HashSet<u32>,
+    comment_lines: HashSet<u32>,
+    extra_sites: Option<&[NapiExtraSite]>,
+) -> Annotations {
+    let mut annotations = Annotations {
+        perf_lines,
+        comment_lines,
+        ..Annotations::default()
+    };
+    for site in extra_sites.unwrap_or_default() {
+        match site.kind.as_str() {
+            "logpoint" => {
+                annotations.logpoint_lines.insert(site.line);
+            }
+            "selection" => annotations.selections.push((site.line, site.column)),
+            _ => {}
+        }
+    }
+    annotations
+}
+
 fn offset_to_line(source: &str, offset: u32) -> u32 {
     // Byte slice, not &str slice: a label offset landing mid-character must
     // not panic on a char boundary.
@@ -168,8 +213,10 @@ pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
 
     // Phase 8: read `//?` / `//?.` annotations from the parsed comments now,
     // before the transformer consumes the AST. Lines are original-source, which
-    // is the same coordinate space the Instrumenter tags sites in.
+    // is the same coordinate space the Instrumenter tags sites in — and the same
+    // space the caller's `extra_sites` arrive in, so the two merge cleanly.
     let (perf_lines, comment_lines) = collect_annotations(&source, &program.comments);
+    let annotations = build_annotations(perf_lines, comment_lines, opts.extra_sites.as_deref());
 
     let scoping = SemanticBuilder::new()
         .build(&program)
@@ -203,8 +250,10 @@ pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
 
     // Phase 4: inject value-capture + coverage into the SAME AST before the
     // single codegen — no second pass, no source-map composition.
-    let mut instrumenter = Instrumenter::new(&allocator, &source, perf_lines, comment_lines);
+    let mut instrumenter = Instrumenter::new(&allocator, &source, annotations);
     instrumenter.visit_program(&mut program);
+    // Anchors that landed outside every capture span fall back to their line.
+    instrumenter.resolve_unclaimed_selections();
 
     let codegen_ret = Codegen::new()
         .with_options(CodegenOptions {
