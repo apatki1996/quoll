@@ -88,10 +88,16 @@ export class QuollSession implements vscode.Disposable {
         this.rerunIfExtraSitesChanged();
       }),
       vscode.debug.onDidChangeBreakpoints(() => this.rerunIfExtraSitesChanged()),
-      // The values mode is read when the Aggregator is built, so a re-run
-      // re-folds the current stream under the new policy.
+      // Both are read at run start — the values mode when the Aggregator is
+      // built, the runtime when the subprocess is spawned — so a re-run is
+      // what applies either change.
       vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration(`${EXTENSION_ID}.values`)) this.scheduleRun();
+        if (
+          e.affectsConfiguration(`${EXTENSION_ID}.values`) ||
+          e.affectsConfiguration(`${EXTENSION_ID}.runtime`)
+        ) {
+          this.scheduleRun();
+        }
       }),
       registerValueHover(doc, (line, column) => this.siteAt(line, column)),
     );
@@ -182,6 +188,7 @@ export class QuollSession implements vscode.Disposable {
       runnerMain: stageRunner(this.extensionRoot),
       runId,
       runTimeoutMs: config.runTimeoutMs(),
+      browser: config.runtime() === "browser",
       code: prepared.code,
       entry: this.doc.fileName,
       projectRoot,

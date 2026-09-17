@@ -82,6 +82,7 @@ pnpm run test:unit    # Deno unit tests (Aggregator, resolver, serialization)
 pnpm run check:phase3 # source-map attribution
 pnpm run check:phase5 # expand-after-exit keep-alive
 pnpm run check:timeout # post-`done` wait + run-timeout ceiling
+pnpm run check:jsdom  # browser runtime: jsdom globals, without displacing ours
 pnpm run eval         # golden-eval harness
 pnpm test             # VS Code integration tests (@vscode/test-electron)
 ```

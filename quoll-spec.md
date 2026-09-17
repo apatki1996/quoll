@@ -289,10 +289,11 @@ Phases 8–11 and 15 are deliberately cheap because the protocol pre-paid for th
   one napi binary per target, built in CI — local `build:core` produces only
   the host platform's binary, and other platforms silently fall back to the
   no-transpile identity path.
-- **jsdom under Deno is unproven for this use** (Quokka runs jsdom under Node).
-  Deno's npm compat should cover it, but sanity-check before phase 7 — this is
-  the main reason the IPC layer stays runtime-agnostic so a Node runner can be
-  swapped in if needed.
+- **jsdom under Deno** — checked, and it works (jsdom 30 on Deno 2.8). The one
+  thing deny-all had to give up is `--allow-env`, because jsdom's `debug`
+  dependency enumerates `process.env`; browser mode pairs that grant with an
+  empty spawn environment. See the Phase 7 entry in `DECISIONS.md`. The IPC
+  layer still stays runtime-agnostic, so a Node runner remains swappable.
 
 ## Where the build actually is
 
@@ -306,7 +307,9 @@ with inline values, coverage (incl. partial), inline errors, inline
 transitive watch graph, live comments (`//?`, `//?.`, plus `quoll.values:
 "comments"` quiet mode), and — in quiet mode — value-on-selection and logpoints,
 both produced through `InstrumentOpts.extraSites`. Phase 7's hardening landed
-piecemeal; **jsdom has not been attempted**.
+piecemeal, and its jsdom half now ships as `quoll.runtime: "browser"` — a jsdom
+window's globals installed before user code, with jsdom resolved from the
+project's `node_modules`.
 
 Beyond the numbered phases: **Value Peek phase A** — hover an expression to see
 its captured value, with *Explore value* revealing it in the tree. Phase C
@@ -314,7 +317,7 @@ its captured value, with *Explore value* revealing it in the tree. Phase C
 `extraSites` work. Phase B (`inlineValues: "always" | "hover"`) is deliberately
 deferred.
 
-**Not started:** phases 10–15, and jsdom. Phases 10–11 stay cheap because the
+**Not started:** phases 10–15. Phases 10–11 stay cheap because the
 protocol pre-paid for them (`kind`, the `runId`/`seq` event log) — phase 9 bore
 that out, costing one core commit and no protocol change.
 

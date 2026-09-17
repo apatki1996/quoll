@@ -90,14 +90,16 @@ jobs:
         run: pnpm run test:unit
 
       # The end-to-end checks that own one contract each: source-map
-      # attribution (phase 3), expand-after-exit keep-alive (phase 5), and the
+      # attribution (phase 3), expand-after-exit keep-alive (phase 5), the
       # post-`done` wait — it waits out pending timers, and the run-timeout
-      # ceiling is what stops a never-quiet run.
+      # ceiling is what stops a never-quiet run — and the browser runtime,
+      # where a jsdom window must not displace the runner's own globals.
       - name: Contract checks
         run: |
           pnpm run check:phase3
           pnpm run check:phase5
           pnpm run check:timeout
+          pnpm run check:jsdom
 
       - name: Golden-eval harness
         run: pnpm run eval

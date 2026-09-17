@@ -22,6 +22,74 @@ entry states what the screenshot showed, so the reasoning stands without it.
 
 ---
 
+## 2026-09-17 — Phase 7 browser runtime: jsdom from the project, env scrubbed at spawn [DECIDED]
+
+- **Context:** Phase 7's other half. The spec flagged "jsdom under Deno is
+  unproven for this use — sanity-check before phase 7", and the sandbox entry
+  below warned that this phase "changes the threat model again". Both turned out
+  to be the same question: what does jsdom need that deny-all denies?
+- **Verified first, decided after:** jsdom 30 loads and works under Deno 2.8 —
+  DOM, `querySelector`, `localStorage`, events, `getComputedStyle` — but needs
+  **`--allow-env`**, because its `debug` dependency enumerates `process.env` on
+  load. Nothing else: no net (jsdom loads no external resources by default), no
+  write, no run.
+- **Decision:**
+  - **Grant `--allow-env`, and spawn the subprocess with an EMPTY environment**
+    (`env: {}` in `startRun`). The permission boundary and the data boundary are
+    different tools; the cheaper one here is the data boundary — what user code
+    enumerates is an empty object, so the grant hands out nothing, and the
+    grant's blast radius no longer depends on what the user happens to export.
+    `PATH` is the one survivor, because `quoll.denoPath` may legitimately be the
+    bare `"deno"` and the exec lookup reads the CHILD's environment; dropping it
+    breaks the spawn, not the sandbox.
+  - **Only browser mode is spawned that way.** Node mode has no env grant, so
+    scrubbing there would buy nothing and would change behavior Deno itself
+    depends on.
+  - **jsdom resolves from the PROJECT's `node_modules`**, through the byonm
+    setup phase 6 already built — no new plumbing, no extension-side copy, and
+    a project pins the jsdom version it actually tests against. A project
+    without it gets one clear error naming the fix, not a pile of
+    `ReferenceError: document`.
+  - **Mode is `quoll.runtime: "node" | "browser"`, default `node`**, passed to
+    the runner as **argv[1]** — same reasoning as the timeout above: the `run`
+    message is frozen, and `Deno.args` costs no permission. So Phase 7 also
+    lands with no protocol change.
+  - **The runner keeps five globals** (`console`, the four timers, and
+    `performance`) instead of taking jsdom's. `console` is the capture channel
+    and the timers are the pending-work accounting the post-`done` wait reads,
+    so jsdom's versions would break capture and run completion while looking
+    right. `performance` is sharper still: under Deno's node compat jsdom's
+    delegates back to `globalThis.performance`, so installing it makes
+    `performance.now()` recurse until the stack blows — the check below catches
+    exactly that.
+- **Rejected:**
+  - *Bundling jsdom in the extension* — ~10MB in every VSIX for a mode most
+    scratchpad users never enable, plus a second jsdom version to keep current,
+    plus widening `--allow-read` to the extension directory. Revisit if people
+    ask for browser mode in a scratch buffer that has no project.
+  - *Scoped `--allow-env=VAR,...`* — the failing call is
+    `Object.keys(process.env)`, which a scoped grant still denies.
+  - *Keeping deny-all and shimming a DOM by hand* — a hand-rolled `document` is
+    a lie that diverges from browser behavior exactly where a scratchpad is
+    being used to learn what browsers do.
+  - *A `run`-message field for the mode* — a breaking change to a frozen
+    interface for something that is process invocation.
+- **Known limitations:** a scratch buffer with no project root has no
+  `node_modules` to resolve jsdom from, so browser mode needs a project; and a
+  package manager that stores real files OUTSIDE the project root would fall
+  outside `--allow-read=<projectRoot>` (pnpm's `.pnpm` directory is inside it,
+  so the common case is covered).
+- **Revisit if:** browser mode is wanted without a project (then bundle jsdom
+  and widen the read scope to the extension dir, deliberately), or jsdom turns
+  out to need a permission beyond env — that is a new threat-model decision,
+  not an implementation detail.
+- **Covered by:** `scripts/jsdom-check.mjs` (`pnpm run check:jsdom`), which
+  spawns the real runner with the real flags and the real scrubbed env and
+  asserts the DOM is installed, captures still stream, a pending DOM timer still
+  holds the run open, and `node` mode still has no `document`.
+
+---
+
 ## 2026-09-16 — Gap 2 closed: the async wait ceiling is `quoll.runTimeoutMs` [DECIDED]
 
 - **Context:** "Gap 2 — Async wait budget" above set the direction (wait for
@@ -729,7 +797,10 @@ protocol changes. That's a real validation of the upfront design.
   - Phase 6 (project file imports) needs read access: grant
     `--allow-read=<projectRoot>`, never blanket `--allow-read`.
   - Phase 7 (jsdom / browser-like) changes the threat model again — re-evaluate
-    before granting anything network-adjacent.
+    before granting anything network-adjacent. **Done 2026-09-17:** browser mode
+    grants `--allow-env` and nothing else — net stays denied, and the
+    subprocess is spawned with an empty environment so the grant hands out
+    nothing. See the Phase 7 entry at the top.
   - Net access should stay denied unless a feature explicitly demands it, and then
     only host-scoped.
 - **Rejected:** running user code in the host/extension process or an

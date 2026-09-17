@@ -116,6 +116,19 @@
           ],
           "default": "all",
           "description": "Which inline runtime values to show. 'all' is Quoll's always-on default; 'comments' shows only lines you opt into with a //? comment, a selection, or a breakpoint."
+        },
+        "quoll.runtime": {
+          "type": "string",
+          "enum": [
+            "node",
+            "browser"
+          ],
+          "enumDescriptions": [
+            "Plain Deno: Node-style globals only.",
+            "Browser-like: a jsdom window (document, Element, localStorage, ...) installed as globals. Requires jsdom in the project's node_modules."
+          ],
+          "default": "node",
+          "description": "Which runtime the file runs in. 'browser' installs a jsdom window's globals before your code loads, so DOM code runs in the scratchpad; jsdom is resolved from the project's node_modules (npm i -D jsdom)."
         }
       }
     }
@@ -136,6 +149,7 @@
     "check:phase5": "node scripts/phase5-check.mjs",
     "check:bundle": "node scripts/check-native-bundle.mjs",
     "check:timeout": "node scripts/timeout-check.mjs",
+    "check:jsdom": "node scripts/jsdom-check.mjs",
     "test:unit": "deno check runner/main.ts && deno test --allow-read --allow-write --allow-run --allow-env --allow-sys src/render src/instrument src/runner runner",
     "eval": "node eval/run.mjs",
     "fmt": "oxfmt && cargo fmt --manifest-path crates/quoll-core/Cargo.toml",
@@ -151,6 +165,7 @@
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.1.0",
     "esbuild": "^0.28.2",
+    "jsdom": "^30.0.1",
     "oxfmt": "^0.65.0",
     "oxlint": "^1.80.0",
     "typescript": "^7.0.2"
