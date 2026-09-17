@@ -49,6 +49,13 @@ export type StartRunOpts = {
    * `Deno.args` costs no sandbox permission.
    */
   runTimeoutMs: number;
+  /**
+   * Phase 7 browser runtime: run with a jsdom window installed as globals.
+   * This is the one mode that grants `--allow-env`, because jsdom's
+   * dependencies enumerate `process.env` on load — so the subprocess is spawned
+   * with an EMPTY environment, and the grant hands out nothing.
+   */
+  browser: boolean;
   onMessage: (msg: RunnerMsg) => void;
   /** Runner stderr (diagnostics) and spawn/parse failures. */
   onDiagnostic: (text: string) => void;
@@ -73,10 +80,20 @@ export function startRun(opts: StartRunOpts): RunHandle {
     "--sloppy-imports",
   ];
   if (opts.projectRoot) args.push(`--allow-read=${opts.projectRoot}`);
-  args.push(opts.runnerMain, String(opts.runTimeoutMs));
+  // See StartRunOpts.browser: the grant is paired with the scrubbed env below,
+  // so what user code can enumerate is an empty object either way.
+  if (opts.browser) args.push("--allow-env");
+  args.push(opts.runnerMain, String(opts.runTimeoutMs), opts.browser ? "browser" : "node");
   const child = spawn(opts.denoPath, args, {
     stdio: ["pipe", "pipe", "pipe"],
     cwd: opts.projectRoot,
+    // Only browser mode needs this: without --allow-env, Deno already denies
+    // every read, so node mode keeps the inherited environment (and with it
+    // whatever Deno itself reads) untouched. PATH survives because denoPath
+    // may legitimately be the bare "deno" (see candidatePaths) and the exec
+    // lookup reads the CHILD's environment — dropping it would break the spawn
+    // rather than the sandbox.
+    ...(opts.browser ? { env: { PATH: process.env.PATH ?? "" } } : {}),
   });
 
   child.on("error", (err: NodeJS.ErrnoException) => {

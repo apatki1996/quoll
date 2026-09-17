@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than the resulting array; selecting a variable's name reveals its line.
 - **Logpoints** — a VS Code breakpoint set in a Quoll file opts that line in the
   same way `//?` does, with no debugger session involved (Phase 9).
+- **Browser runtime** — `quoll.runtime: "browser"` installs a jsdom window's
+  globals (`document`, `Element`, `localStorage`, …) before your code runs, so
+  DOM code works in a scratchpad (Phase 7). jsdom is resolved from the
+  project's `node_modules` (`npm i -D jsdom`); the default stays `node`. This
+  is the only mode that grants the sandbox `--allow-env`, and it spawns the
+  runner with an empty environment so the grant hands out nothing.
 
   Both reveal-on-demand features apply to quiet mode (`quoll.values: comments`),
   which is where opting a line in means anything — the `all` default already

@@ -40,6 +40,81 @@ function runTimeoutFromArgs(): number {
   return Math.min(Math.max(ms, ASYNC_POLL_MS), 600_000);
 }
 
+/**
+ * Browser runtime (Phase 7), passed as argv[1] for the same reason as the
+ * timeout above: the `run` message is frozen. "browser" installs a jsdom
+ * window's globals before user code loads; anything else is the plain Deno
+ * runtime, which stays the default.
+ */
+const BROWSER = Deno.args[1] === "browser";
+
+/**
+ * Globals the RUNNER owns, which a jsdom window would otherwise clobber:
+ * `console` is patched to stream captures to the host, the timer four are
+ * patched to count pending work so the post-`done` wait knows when the run is
+ * really over, and `performance` times the run and `//?.` sites. jsdom's
+ * versions all look right and would break capture, run completion and timing
+ * respectively — its `performance` most sharply, since under Deno's node
+ * compat it delegates back to `globalThis.performance`, so installing it makes
+ * `performance.now()` recurse until the stack blows.
+ *
+ * Deno's own `performance` is a spec Performance object, so user code that
+ * expects the browser one still gets it.
+ */
+const RUNNER_OWNED = new Set([
+  "console",
+  "setTimeout",
+  "clearTimeout",
+  "setInterval",
+  "clearInterval",
+  "performance",
+]);
+
+/**
+ * Copy a jsdom window's globals onto `globalThis`, so `document`, `Element`,
+ * `localStorage` and the other ~440 DOM names resolve in user code.
+ *
+ * jsdom comes from the PROJECT's `node_modules` (byonm — see StartRunOpts),
+ * not from the extension. A project that doesn't have it therefore fails here,
+ * and that failure is reported rather than swallowed: browser mode without a
+ * DOM would only fail later, as a pile of ReferenceErrors with no hint of the
+ * real cause.
+ */
+async function installDomGlobals(): Promise<void> {
+  let JSDOM: new (html: string, opts: Record<string, unknown>) => { window: unknown };
+  try {
+    ({ JSDOM } = await import("npm:jsdom"));
+  } catch (err) {
+    // Keep the cause (missing package vs. unreadable files are different
+    // fixes) and add the one the user most likely needs.
+    const cause = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `quoll.runtime is "browser", but jsdom could not be loaded from this ` +
+        `project: ${cause}. Install it (npm i -D jsdom) or set quoll.runtime ` +
+        `back to "node".`,
+      { cause: err },
+    );
+  }
+  const dom = new JSDOM("<!DOCTYPE html><html><head></head><body></body></html>", {
+    url: "http://localhost/",
+    // Gives requestAnimationFrame and friends; jsdom loads no external
+    // resources by default, so this needs no network permission.
+    pretendToBeVisual: true,
+  });
+  const window = dom.window as unknown as Record<string, unknown>;
+  for (const key of Object.getOwnPropertyNames(window)) {
+    if (RUNNER_OWNED.has(key)) continue;
+    const desc = Object.getOwnPropertyDescriptor(window, key);
+    if (desc === undefined) continue;
+    try {
+      Object.defineProperty(globalThis, key, { ...desc, configurable: true });
+    } catch {
+      // Non-configurable host globals — `Infinity`, `NaN`, `undefined`, whose
+      // jsdom copies hold the same values anyway.
+    }
+  }
+}
+
 let runId = -1;
 let seq = 0;
 // Set just before `exit` goes out. The event log is sealed from then on:
@@ -261,10 +336,15 @@ async function handleRun(msg: Extract<HostMsg, { t: "run" }>): Promise<void> {
   trapAsyncErrors();
 
   const start = performance.now();
+  // Encoded BEFORE any DOM install: jsdom brings its own stricter `btoa`,
+  // which rejects the binary string this builds.
+  const entry = toDataUrl(msg.code);
   try {
+    // Before user code, so a module-scope `document.querySelector(...)` works.
+    if (BROWSER) await installDomGlobals();
     // data: URL import: no fs/net permission needed, TS supported, and
     // top-level await resolves before `done` — sync pass + microtask flush.
-    await import(toDataUrl(msg.code));
+    await import(entry);
   } catch (err) {
     const stack = err instanceof Error ? err.stack : undefined;
     send({
