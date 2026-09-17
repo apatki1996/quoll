@@ -37,7 +37,7 @@ Everything in the list above works today, for single-file scratchpads. The roadm
 
 Quoll isn't on the marketplace yet — you run it as a development extension.
 
-**Prerequisites:** Node.js with [pnpm](https://pnpm.io), a Rust toolchain, and [Deno](https://deno.com) 2.x (a [mise](https://mise.jdx.dev) pin is included).
+**Prerequisites:** Node.js with [pnpm](https://pnpm.io), [rustup](https://rustup.rs), and [Deno](https://deno.com) 2.x (a [mise](https://mise.jdx.dev) pin is included). The Rust version is pinned in `rust-toolchain.toml`, so rustup installs and uses the right one for you — no `rustup update` needed.
 
 ```sh
 pnpm install

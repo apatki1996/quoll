@@ -22,6 +22,36 @@ entry states what the screenshot showed, so the reasoning stands without it.
 
 ---
 
+## 2026-09-17 — The Rust toolchain is pinned; MSRV is declared separately [DECIDED]
+
+- **Context:** `cargo clippy -- -D warnings` ran on a floating `stable`, so
+  every six-week Rust release could fail CI on unchanged code with newly-added
+  lints. The oxc 0.144 bump also raised the required rustc, and a checkout with
+  an older `stable` failed with an error naming oxc's packages rather than this
+  project's requirement — CI never saw it, because
+  `dtolnay/rust-toolchain@stable` always installs the newest stable.
+- **Decision:** pin the build toolchain in `/rust-toolchain.toml` (currently
+  1.98.0 + clippy/rustfmt) and declare `rust-version` on the crate separately.
+  They answer different questions: the file is what we build with, the MSRV is
+  what the crate needs (1.96.0, the highest among the oxc 0.147 crates). The
+  file lives at the repo ROOT because rustup resolves it from the working
+  directory and `lint:rust` runs cargo from there with `--manifest-path`. CI
+  drops the toolchain action entirely — every cargo call resolves the file
+  anyway, so an action step would install a toolchain each invocation then
+  overrides. Matches how Deno is already pinned via mise.
+- **Rejected:** *naming the version in the CI action as well* (two places to
+  bump, one of them ignored); *floating `stable` with clippy warnings
+  non-fatal* (the `-D warnings` gate is what makes clippy worth running).
+- **Trade-off accepted:** an oxc bump that raises the MSRV past the pin now
+  fails CI until the same PR bumps the file. That visibility is the point — it
+  turns a contributor's confusing build error into one deliberate line.
+- **Revisit if:** the pin drifts far enough behind stable that contributors hit
+  it, which is a calendar problem, not a design one.
+- **Provenance:** cherry-picked from the parked `claude/merge-dependabot-prs-nofliv`
+  branch; the MSRV was 1.95 there and is bumped here to match oxc 0.147.
+
+---
+
 ## 2026-09-17 — Phase 7 browser runtime: jsdom from the project, env scrubbed at spawn [DECIDED]
 
 - **Context:** Phase 7's other half. The spec flagged "jsdom under Deno is
