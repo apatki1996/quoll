@@ -28,11 +28,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # The instrumentation core is a Rust cdylib (edition 2024 -> needs a
-      # recent stable). rust-cache keys on crates/quoll-core/Cargo.lock.
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      # The instrumentation core is a Rust cdylib. The version AND its
+      # components (clippy, rustfmt) come from /rust-toolchain.toml, which every
+      # cargo call here resolves anyway — naming a toolchain in an action step
+      # instead would install one that each cargo invocation then overrides.
+      # rustup is preinstalled on GitHub runners; this materializes the pin
+      # before rust-cache reads `rustc -vV` for its key.
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: crates/quoll-core

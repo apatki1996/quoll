@@ -1,0 +1,20 @@
+# Pins the toolchain the core is built and linted with, for everyone: rustup
+# reads this file and installs/uses the named version automatically, so a
+# contributor with a stale `stable` gets the right compiler instead of a
+# "not supported by the following packages" error from an oxc MSRV bump.
+#
+# It also makes `cargo clippy -- -D warnings` (see ci.yml) deterministic. On a
+# floating `stable` every six-week Rust release can fail CI on unchanged code
+# with newly-added lints; pinned, a Rust upgrade is a deliberate PR that bumps
+# this file and fixes the new lints together.
+#
+# Bump when: oxc raises its MSRV (a Dependabot cargo PR then fails here until
+# this is bumped in the same PR — that visibility is the point), or when
+# picking up a new stable on purpose.
+#
+# Lives at the repo ROOT, not next to the crate: rustup resolves this file from
+# the working directory, and `pnpm run lint:rust` runs cargo from here with
+# --manifest-path.
+[toolchain]
+channel = "1.98.0"
+components = ["clippy", "rustfmt"]

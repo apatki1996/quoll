@@ -329,12 +329,11 @@ copies the rendered preview, not a deep serialization.
 manifest packages cleanly (`vsce package`), but the VSIX carries only the host
 platform's napi binary, so a real release needs per-target builds.
 
-**Parked work:** the branch `claude/merge-dependabot-prs-nofliv` still holds a
-Rust toolchain pin (`rust-toolchain.toml` + crate MSRV), worth picking up so
-`cargo clippy -- -D warnings` stops floating with `stable`. Its phase 9 /
-value-on-selection commit has been cherry-picked onto main; its remaining commit
-clears dependency advisories that were left open deliberately, so do not take
-it wholesale.
+**Parked work:** the branch `claude/merge-dependabot-prs-nofliv` has been
+harvested — its phase 9 / value-on-selection commit and its Rust toolchain pin
+are both on main now. What is left there clears dependency advisories that were
+left open deliberately, so the branch should not be merged wholesale; it is
+kept only as the record of that third commit.
 
 **Where the rest of the state lives:** `DECISIONS.md` is the running journal of
 *why* (read it before reopening a settled question — several entries record
