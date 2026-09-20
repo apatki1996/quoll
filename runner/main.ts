@@ -49,17 +49,25 @@ function runTimeoutFromArgs(): number {
 const BROWSER = Deno.args[1] === "browser";
 
 /**
- * Globals the RUNNER owns, which a jsdom window would otherwise clobber:
- * `console` is patched to stream captures to the host, the timer four are
- * patched to count pending work so the post-`done` wait knows when the run is
- * really over, and `performance` times the run and `//?.` sites. jsdom's
- * versions all look right and would break capture, run completion and timing
- * respectively — its `performance` most sharply, since under Deno's node
- * compat it delegates back to `globalThis.performance`, so installing it makes
- * `performance.now()` recurse until the stack blows.
+ * Globals NOT taken from the jsdom window, for two distinct reasons.
  *
- * Deno's own `performance` is a spec Performance object, so user code that
- * expects the browser one still gets it.
+ * The runner OWNS the first five: `console` is patched to stream captures to
+ * the host, and the timer four are patched to count pending work so the
+ * post-`done` wait knows when the run is really over. jsdom's versions look
+ * right and would silently break capture and run completion.
+ *
+ * The last four are jsdom wrappers that DELEGATE BACK to the global they would
+ * replace — under Deno, `window.btoa` calls bare `btoa`, `window.performance`
+ * resolves `globalThis.performance`, and so on. Copy one onto `globalThis` and
+ * it becomes its own callee: `btoa("hi")` recurses until the stack blows, and
+ * jsdom's `catch` reports the overflow as "The string to be encoded contains
+ * invalid characters" — a message that blames the caller's input. Leaving
+ * Deno's originals in place fixes `window.btoa(...)` too, since the wrapper
+ * then delegates to something real.
+ *
+ * Deno's versions are all spec implementations, so browser code still gets
+ * what it expects. Anything else jsdom's window defines is fair game; only a
+ * self-delegating wrapper or a runner-owned channel belongs here.
  */
 const RUNNER_OWNED = new Set([
   "console",
@@ -67,7 +75,11 @@ const RUNNER_OWNED = new Set([
   "clearTimeout",
   "setInterval",
   "clearInterval",
+  // Self-delegating jsdom wrappers — see above.
   "performance",
+  "btoa",
+  "atob",
+  "queueMicrotask",
 ]);
 
 /**
@@ -336,8 +348,9 @@ async function handleRun(msg: Extract<HostMsg, { t: "run" }>): Promise<void> {
   trapAsyncErrors();
 
   const start = performance.now();
-  // Encoded BEFORE any DOM install: jsdom brings its own stricter `btoa`,
-  // which rejects the binary string this builds.
+  // Encoded before the DOM install. `btoa` is in RUNNER_OWNED now, so this is
+  // no longer load-bearing — but the encoding has no reason to run under a
+  // half-installed set of globals, and this ordering keeps it that way.
   const entry = toDataUrl(msg.code);
   try {
     // Before user code, so a module-scope `document.querySelector(...)` works.

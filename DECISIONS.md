@@ -64,14 +64,25 @@ entry states what the screenshot showed, so the reasoning stands without it.
   load. Nothing else: no net (jsdom loads no external resources by default), no
   write, no run.
 - **Decision:**
-  - **Grant `--allow-env`, and spawn the subprocess with an EMPTY environment**
-    (`env: {}` in `startRun`). The permission boundary and the data boundary are
-    different tools; the cheaper one here is the data boundary — what user code
-    enumerates is an empty object, so the grant hands out nothing, and the
-    grant's blast radius no longer depends on what the user happens to export.
-    `PATH` is the one survivor, because `quoll.denoPath` may legitimately be the
-    bare `"deno"` and the exec lookup reads the CHILD's environment; dropping it
-    breaks the spawn, not the sandbox.
+  - **Grant `--allow-env`, and spawn the subprocess with a SCRUBBED
+    environment** (`env: { PATH }` in `startRun`). The permission boundary and
+    the data boundary are different tools; the cheaper one here is the data
+    boundary — the grant's blast radius stops depending on what the user
+    happens to have exported. `PATH` is the one survivor, because
+    `quoll.denoPath` may legitimately be the bare `"deno"` and the exec lookup
+    reads the CHILD's environment; dropping it breaks the spawn, not the
+    sandbox. So browser-mode user code can read PATH, and with it the home
+    directory and installed toolchains — a disclosure, not a channel, since
+    net/write/run stay denied. Resolving `denoPath` to an absolute path in the
+    host would make the env genuinely empty and is the fix if that ever matters.
+  - **`quoll.runtime` is `machine`-scoped, like `quoll.denoPath`.** Browser mode
+    widens the sandbox and makes every run load the project's own jsdom before
+    the user's file, even a file that imports nothing. Left at the default
+    `window` scope, a cloned repo's `.vscode/settings.json` could turn that on
+    for someone who opened a file only to read it — the same move `denoPath`'s
+    scope exists to prevent. `machine-overridable` does not help; it still
+    allows the workspace override. Cost accepted: a DOM project cannot check
+    browser mode into its workspace settings, so each user enables it once.
   - **Only browser mode is spawned that way.** Node mode has no env grant, so
     scrubbing there would buy nothing and would change behavior Deno itself
     depends on.
@@ -84,14 +95,20 @@ entry states what the screenshot showed, so the reasoning stands without it.
     the runner as **argv[1]** — same reasoning as the timeout above: the `run`
     message is frozen, and `Deno.args` costs no permission. So Phase 7 also
     lands with no protocol change.
-  - **The runner keeps five globals** (`console`, the four timers, and
-    `performance`) instead of taking jsdom's. `console` is the capture channel
-    and the timers are the pending-work accounting the post-`done` wait reads,
-    so jsdom's versions would break capture and run completion while looking
-    right. `performance` is sharper still: under Deno's node compat jsdom's
-    delegates back to `globalThis.performance`, so installing it makes
-    `performance.now()` recurse until the stack blows — the check below catches
-    exactly that.
+  - **The runner keeps nine globals** instead of taking jsdom's, for two
+    different reasons. It OWNS `console` (the capture channel) and the four
+    timers (the pending-work accounting the post-`done` wait reads), so jsdom's
+    versions would break capture and run completion while looking right. The
+    other four — `performance`, `btoa`, `atob`, `queueMicrotask` — are jsdom
+    wrappers that DELEGATE BACK to the global they would replace, so copying one
+    onto `globalThis` makes it its own callee and it recurses until the stack
+    blows. `btoa` is the nastiest: jsdom's `catch` reports the overflow as "The
+    string to be encoded contains invalid characters", blaming the caller's
+    input, so `btoa("hi")` fails with a message about `"hi"`. Leaving Deno's
+    originals also fixes `window.btoa(...)`, which then delegates to something
+    real. The rule for adding to the set: a name belongs there if it is a
+    runner-owned channel or a self-delegating wrapper, not merely because Deno
+    has its own.
 - **Rejected:**
   - *Bundling jsdom in the extension* — ~10MB in every VSIX for a mode most
     scratchpad users never enable, plus a second jsdom version to keep current,
@@ -115,8 +132,10 @@ entry states what the screenshot showed, so the reasoning stands without it.
   not an implementation detail.
 - **Covered by:** `scripts/jsdom-check.mjs` (`pnpm run check:jsdom`), which
   spawns the real runner with the real flags and the real scrubbed env and
-  asserts the DOM is installed, captures still stream, a pending DOM timer still
-  holds the run open, and `node` mode still has no `document`.
+  asserts the DOM is installed, the self-delegating wrappers still work (a
+  `btoa`/`atob` round-trip and a `queueMicrotask`, each of which recursed before
+  they were protected), captures still stream, a pending DOM timer still holds
+  the run open, and `node` mode still has no `document`.
 
 ---
 
@@ -258,9 +277,13 @@ entry states what the screenshot showed, so the reasoning stands without it.
   logpoint, plus a line whose emoji prefix makes a byte/UTF-16 mix-up change the
   answer. Verified to FAIL with the feature removed and again with the column
   conversion removed, so it is a real net and not a tautology.
-- **Known limitation:** selecting on a line with no capture at all (a
+- **Known limitations:** selecting on a line with no capture at all (a
   `console.log` line, a bare `}`) reveals nothing — there is no captured value
-  to show, and inventing one would violate truthful-over-cosmetic.
+  to show, and inventing one would violate truthful-over-cosmetic. The
+  line-granular fallback is also narrower than "never silently empty" suggests:
+  it matches a site's START or END line, so an anchor on a MIDDLE line of a
+  multi-line expression (selecting `.map` on line 2 of a three-line chain)
+  claims nothing and falls back to nothing.
 - **Revisit if:** sub-expression values are asked for often enough to justify
   the safe-wrap analysis; or logpoints need to carry a `logMessage` expression
   rather than simply opting their line in.

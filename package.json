@@ -128,7 +128,8 @@
             "Browser-like: a jsdom window (document, Element, localStorage, ...) installed as globals. Requires jsdom in the project's node_modules."
           ],
           "default": "node",
-          "description": "Which runtime the file runs in. 'browser' installs a jsdom window's globals before your code loads, so DOM code runs in the scratchpad; jsdom is resolved from the project's node_modules (npm i -D jsdom)."
+          "scope": "machine",
+          "description": "Which runtime the file runs in. 'browser' installs a jsdom window's globals before your code loads, so DOM code runs in the scratchpad; jsdom is resolved from the project's node_modules (npm i -D jsdom). Machine-scoped, like quoll.denoPath: browser mode widens the sandbox (it grants --allow-env) and loads the project's own jsdom on every run, so it has to be your choice, not a cloned repo's."
         }
       }
     }

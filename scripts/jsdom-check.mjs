@@ -81,7 +81,21 @@ assert.deepEqual(errors(domRun), [], "browser run must not error");
 assert.deepEqual(logs(domRun), ['"hello"', '"function"'], "DOM globals must be installed");
 assert.equal(domRun.at(-1).reason, "complete");
 
-// 2) Value capture works through DOM expressions (the whole point — these are
+// 2) The globals a jsdom window wraps by DELEGATING to the real one are left
+//    alone, so they don't become their own callee. Each of these recursed
+//    until the stack blew when jsdom's copy was installed — and `btoa` did it
+//    while reporting "invalid characters", blaming the caller's input. The
+//    window's own wrappers must work too: they delegate to what is left here.
+const wrappers = `
+console.log(btoa("hi"), atob("aGk="), window.btoa("hi"));
+queueMicrotask(() => console.log("microtask"));
+console.log(typeof performance.now());
+`;
+const wrapperRun = await run(wrappers, "browser");
+assert.deepEqual(errors(wrapperRun), [], "self-delegating globals must not recurse");
+assert.deepEqual(logs(wrapperRun), ['"aGk="', '"number"', '"microtask"'], "wrappers must work");
+
+// 3) Value capture works through DOM expressions (the whole point — these are
 //    ordinary capture sites whose values happen to be DOM objects).
 const captured = `(globalThis as any).__quoll.log(0, document.title = "t");`;
 const capturedRun = await run(captured, "browser");
@@ -91,7 +105,7 @@ assert.equal(
   "captures must still be emitted in browser mode",
 );
 
-// 3) The timer patch survived: a pending setTimeout still holds the run open
+// 4) The timer patch survived: a pending setTimeout still holds the run open
 //    and its late value is re-emitted. jsdom's window.setTimeout would be
 //    untracked, so the run would end early and report "complete" with nothing.
 const timer = `
@@ -106,7 +120,7 @@ assert.ok(values.length >= 2, "the runner's timer patch must survive the jsdom i
 assert.match(values.at(-1).value.preview, /then "DIV"/);
 assert.ok(elapsed >= 600, `must wait for the DOM timer (waited ${elapsed}ms)`);
 
-// 4) node mode is untouched: no DOM, no jsdom load, so the default stays the
+// 5) node mode is untouched: no DOM, no jsdom load, so the default stays the
 //    plain sandbox and nobody pays for a runtime they didn't ask for.
 const nodeRun = await run(`console.log(typeof document);`, "node");
 assert.deepEqual(logs(nodeRun), ['"undefined"'], "node mode must not install a DOM");
