@@ -59,6 +59,10 @@
       {
         "command": "quoll.live",
         "title": "Quoll: Resume Live"
+      },
+      {
+        "command": "quoll.goToStop",
+        "title": "Go to Timeline Stop"
       }
     ],
     "views": {
@@ -67,6 +71,12 @@
           "id": "quollValues",
           "name": "Quoll Values",
           "icon": "$(symbol-value)"
+        },
+        {
+          "id": "quollTimeline",
+          "name": "Quoll Timeline",
+          "type": "webview",
+          "icon": "$(history)"
         }
       ]
     },
@@ -84,6 +94,10 @@
         },
         {
           "command": "quoll.exploreValue",
+          "when": "false"
+        },
+        {
+          "command": "quoll.goToStop",
           "when": "false"
         }
       ],

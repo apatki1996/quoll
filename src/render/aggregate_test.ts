@@ -1,6 +1,6 @@
 // Aggregator unit tests: `mise exec -- deno test src/render/ runner/`
 import { strict as assert } from "node:assert";
-import { Aggregator, stepIndices, type SiteInfo } from "./aggregate.ts";
+import { Aggregator, stepIndices, timelineRows, type SiteInfo } from "./aggregate.ts";
 
 /** A site spanning one whole line by default; pass a span to nest sites. */
 function site(line: number, kind: string, column = 0, endColumn = 80, endLine = line): SiteInfo {
@@ -182,4 +182,50 @@ Deno.test("replay un-settles a promise that settled later", () => {
   const rewound = new Aggregator(sites, () => undefined);
   for (let i = 0; i <= stops[0]!; i++) rewound.ingest(log[i]!);
   assert.deepEqual(rewound.lineValues().get(2), ["Promise { <pending> }"]);
+});
+
+Deno.test("timeline rows are the stops, in order, with elapsed time", () => {
+  const log = [
+    { t: "value", siteId: 1, value: { type: "number", preview: "1" }, ts: 1000 },
+    { t: "cover", siteId: 2, hits: 1, ts: 1001 },
+    { t: "console", level: "log", args: [{ type: "string", preview: "hi" }], siteId: 7, ts: 1005 },
+    { t: "perf", siteId: 1, durationMs: 0.5, ts: 1020 },
+    { t: "error", message: "boom", siteId: 7, ts: 1030 },
+  ] as never[];
+  const rows = timelineRows(log, (event) => ((event as { siteId?: number }).siteId ?? 0) * 10, 2);
+
+  // Dense indices: the webview treats a row's position as its stop id.
+  assert.deepEqual(
+    rows.map((r) => r.index),
+    [0, 1, 2, 3],
+  );
+  assert.deepEqual(
+    rows.map((r) => r.kind),
+    ["value", "console", "perf", "error"], // cover is not a stop
+  );
+  assert.deepEqual(
+    rows.map((r) => r.preview),
+    ["1", "hi", "⏱ 0.50ms", "✗ boom"],
+  );
+  assert.deepEqual(
+    rows.map((r) => r.elapsedMs),
+    [0, 5, 20, 30], // from the run's FIRST event, recorded or not
+  );
+  assert.deepEqual(
+    rows.map((r) => r.current),
+    [false, false, true, false],
+  );
+  assert.deepEqual(rows[0]!.line, 10);
+});
+
+Deno.test("timeline rows tolerate an unattributable event", () => {
+  const log = [
+    { t: "console", level: "log", args: [{ type: "string", preview: "x" }], ts: 5 },
+  ] as never[];
+  // A console line the source map can't place: line 0 renders no line badge
+  // rather than dropping the row, so the timeline stays a complete record.
+  assert.deepEqual(
+    timelineRows(log, () => undefined),
+    [{ index: 0, line: 0, kind: "console", preview: "x", elapsedMs: 0, current: false }],
+  );
 });

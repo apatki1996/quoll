@@ -59,7 +59,7 @@
 | Live Comments `//?`, perf `//?.`, value-on-selection | Community | 8 |
 | Logpoints (breakpoints as log sites) | Community | 9 |
 | Time Machine (step through execution) | Community | 10 |
-| Interactive Timeline | Pro | 11 |
+| Interactive Timeline | Pro | 11 (line-level shipped; functions/stacks open) |
 | Interactive Value Graphs | Pro | 11 |
 | CPU Profiler | Community | 12 |
 | Snaps (run snippets in Vue/Svelte files) | Community | 13 |
@@ -256,7 +256,11 @@ type RemoteValue = {
     disk belongs to phase 15, which needs a file format regardless.)*
 11. **Interactive Timeline + Value Graphs** — webview consuming the same event
     log (color-coded function/line transitions, stack traces) and `RemoteValue`
-    lazy expansion for visual data-structure graphs.
+    lazy expansion for visual data-structure graphs. *(Partly shipped: the
+    timeline renders phase 10's tape, one row per stop, click to jump. The
+    FUNCTION dimension — transitions and stack traces — is not free: there is
+    no function-entry capture kind and the runner keeps no stack, so it needs
+    a core change. Value graphs are untouched and need no new capture data.)*
 12. **CPU Profiler** — drive V8 inspector profiling in the runner
     (`profileStart`/`profileStop`); flamegraph webview; map frames back through
     the source map.
@@ -329,9 +333,18 @@ its captured value, with *Explore value* revealing it in the tree. Phase C
 `extraSites` work. Phase B (`inlineValues: "always" | "hover"`) is deliberately
 deferred.
 
-**Not started:** phases 11–15. Phase 11 stays cheap for the reason phases 9 and
-10 did — the protocol pre-paid for it (`kind`, the `runId`/`seq` event log) —
-and it can consume the very tape phase 10 already records.
+**Partly done:** phase 11. The Interactive Timeline ships as a webview view
+over phase 10's tape — one row per stop, colour-coded by event kind, click to
+park the Time Machine there and scroll to the line. That half was as cheap as
+the protocol promised. The other two are not started and differ in cost:
+Interactive Value Graphs need no new capture data (they are `expand` plus a
+layout), while the timeline's FUNCTION dimension — colour-coded function
+transitions and stack traces — needs a `function` capture kind in the Oxc pass
+and a call stack in the runner. That is the first place since phase 9 where a
+"cheap because the protocol pre-paid for it" phase turns out to need core work,
+and the spec's own phase-11 line understated it.
+
+**Not started:** phases 12–15.
 
 **Known limitations** (each with a `DECISIONS.md` entry): out-of-order
 settlement of several promises captured at ONE site can mis-slot; Copy Value

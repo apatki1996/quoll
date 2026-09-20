@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Interactive Timeline** — a *Quoll Timeline* view listing the run as it
+  happened: one row per captured moment, colour-coded by kind, with its source
+  line and offset in time. Click a row to park the Time Machine on that moment
+  and scroll to the line. It reads the same tape the Time Machine steps, so the
+  two can never disagree. (Phase 11, line level — function transitions and
+  stack traces still to come.)
 - **Time Machine** — step back and forth through a finished run (Phase 10).
   *Quoll: Step Back* enters it (`alt+left`/`alt+right` to move, `escape` to
   leave, or click the status bar), and the editor — inline values, errors,

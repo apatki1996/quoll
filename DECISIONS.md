@@ -22,6 +22,61 @@ entry states what the screenshot showed, so the reasoning stands without it.
 
 ---
 
+## 2026-09-20 — Phase 11a Timeline: one tape, two front ends [DECIDED]
+
+- **Context:** Phase 11 is "Interactive Timeline + Value Graphs — webview
+  consuming the same event log (color-coded function/line transitions, stack
+  traces) and `RemoteValue` lazy expansion for visual data-structure graphs."
+  The spec calls the phase cheap because the protocol pre-paid for it. Checking
+  that before building: the tape phase 10 records carries `t`, `siteId`, `ts`
+  and `seq`, which is everything a LINE-level timeline needs. It carries
+  nothing about functions. `crates/quoll-core/src/instrument.rs` instruments
+  statements, branches and expressions — there is no function-entry site — and
+  the runner keeps no call stack. So the "cheap" claim holds for two thirds of
+  the phase and not for the third that mentions functions.
+- **Decision:** Ship the timeline over the existing tape, and only that.
+  `timelineRows()` (pure, in `aggregate.ts` beside `stepIndices`) turns the tape
+  into one row per Time Machine stop; `src/timeline/view.ts` renders them in a
+  webview view next to the value explorer. Row `i` IS stop `i`, so a click is
+  `stepTo(i)` and the whole editor rewinds with it — the Timeline and the Time
+  Machine are one mechanism with two front ends, not two recordings.
+  - A webview, not a TreeView: a timeline earns its place by showing the SHAPE
+    of a run (kind, line, offset in time). A tree of the same events sorted by
+    time would be the value explorer with a different comparator.
+  - The page is inline HTML under a nonce CSP with `localResourceRoots: []` —
+    it reads no files, loads nothing, and builds every row with `textContent`.
+    A captured value is user data that reaches this page as text; it must never
+    reach it as markup.
+  - One command (`quoll.goToStop`) does both halves of a click, step and
+    reveal, so the webview's click and a test's `executeCommand` take the same
+    path. It returns whether it landed, because a webview can hold an index
+    from a run that no longer exists.
+- **Rejected:**
+  - *Function transitions and stack traces now* — they need a `function`
+    capture kind in the Rust pass plus a runner-side stack. That is core work
+    with a protocol addition, not the frontend work this phase was budgeted as.
+    Deferred deliberately; see below.
+  - *Value graphs in the same change* — a second, independent feature (graph
+    layout over the existing `expand` round-trip). It needs no new capture
+    data, so it can land on its own without blocking or being blocked.
+  - *A second recording for the timeline* — the failure mode phase 10 was
+    designed against. The timeline reads the tape or it does not exist.
+  - *Bundling a graph/chart library* — a row is a flexbox with four spans.
+- **Revisit if:** a run's rows outgrow what a sidebar list can show (then it
+  wants the horizontal strip Quokka has, and a real layout pass), or the
+  function dimension gets built — that changes what a "stop" means and the row
+  model with it.
+- **Still open (phase 11's other halves):** function/line transition colouring
+  and stack traces (needs the core change above), and Interactive Value Graphs.
+  `quoll-spec.md` records both as remaining.
+- **Covered by:** `timelineRows` unit tests in `src/render/aggregate_test.ts`
+  (dense stop indices, cover excluded, elapsed time from the run's first event,
+  an unattributable console line kept rather than dropped) and an integration
+  test in `src/test/extension.test.ts` that jumps to a stop through the real
+  command and reads the rewound state back through the hover.
+
+---
+
 ## 2026-09-20 — Phase 10 Time Machine: replay a log prefix, don't snapshot [DECIDED]
 
 - **Context:** Phase 10 in `quoll-spec.md` — step forward/back through a

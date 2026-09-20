@@ -15,6 +15,7 @@ export const Commands = {
   stepBack: "quoll.stepBack",
   stepForward: "quoll.stepForward",
   live: "quoll.live",
+  goToStop: "quoll.goToStop",
 } as const;
 
 /** Context key gating the Time Machine keybindings (true while stepping). */
@@ -23,6 +24,7 @@ export const STEPPING_CONTEXT = "quoll.stepping";
 /** View IDs from `contributes.views`. */
 export const Views = {
   values: "quollValues",
+  timeline: "quollTimeline",
 } as const;
 
 /** `TreeItem.contextValue` values matched by `contributes.menus` `when` clauses. */

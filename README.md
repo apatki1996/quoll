@@ -12,6 +12,7 @@ Quoll runs your JavaScript/TypeScript as you type and shows what your code actua
 - **Live comments** — mark a line with `//?` to single it out, or `//?.` to time it; `quoll.values: "comments"` shows only those
 - **Reveal on demand** — in that quiet mode, selecting an expression or setting a breakpoint reveals just that value
 - **Browser runtime** — `quoll.runtime: "browser"` gives your scratchpad a jsdom `document` (needs `jsdom` in the project's `node_modules`)
+- **Interactive timeline** — see the run as a list of moments in the order they happened, and click one to jump the editor there
 - **Time machine** — step back through a finished run and watch the editor re-render as it stood at each captured value
 - **Value explorer** — a tree of the run's captured values, expanded lazily, with copy-to-clipboard
 - **Project imports** — import your own files; editing one re-runs the scratchpad
@@ -26,7 +27,7 @@ Checkout some [more examples](./examples/EXAMPLES.md).
 
 Quoll is in early, active development and is **not on the marketplace yet** — you run it from source (below).
 
-Everything in the list above works today, for single-file scratchpads — except the browser runtime, which needs a project to resolve jsdom from. The roadmap (see [`quoll-spec.md`](quoll-spec.md), whose "Where the build actually is" section tracks what's done) targets full feature parity with Quokka.js: the interactive timeline and value graphs, CPU profiling, and more.
+Everything in the list above works today, for single-file scratchpads — except the browser runtime, which needs a project to resolve jsdom from. The roadmap (see [`quoll-spec.md`](quoll-spec.md), whose "Where the build actually is" section tracks what's done) targets full feature parity with Quokka.js: value graphs, CPU profiling, and more.
 
 ## How it works
 

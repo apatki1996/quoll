@@ -245,3 +245,62 @@ export function stepIndices(log: readonly RunnerEvent[]): number[] {
   }
   return stops;
 }
+
+/** One Timeline row: a Time Machine stop, ready to render (phase 11). */
+export interface TimelineRow {
+  /** Stop index — what `QuollSession.stepTo` takes. Dense, so it doubles as
+   * the row's position in this array. */
+  index: number;
+  line: number;
+  /** The event kind, which the Timeline colours by. */
+  kind: string;
+  preview: string;
+  /** Since the run's first recorded event. */
+  elapsedMs: number;
+  /** Is the Time Machine parked on this row? */
+  current: boolean;
+}
+
+/** One line of text for a recorded event — what a Timeline row shows. */
+function rowPreview(msg: RunnerEvent): string {
+  switch (msg.t) {
+    case "value":
+      return msg.value.preview;
+    case "console":
+      return msg.args.map((a) => a.preview).join(" ");
+    case "error":
+      return `✗ ${msg.message}`;
+    case "perf":
+      return `⏱ ${formatDuration(msg.durationMs)}`;
+    default:
+      return msg.t;
+  }
+}
+
+/**
+ * The run as a list of moments (phase 11 Timeline): one row per stop, in `seq`
+ * order. Row `i` IS stop `i`, so a click is `stepTo(i)` — the Timeline and the
+ * Time Machine are one mechanism with two front ends, not two recordings.
+ *
+ * `lineOf` is the caller's attribution map (the same two the Aggregator gets:
+ * site ids for `value`/`perf`, generated lines for `console`/`error`), and
+ * `current` is the stop the Time Machine is parked on, if any.
+ */
+export function timelineRows(
+  log: readonly (RunnerEvent & { ts: number })[],
+  lineOf: (event: RunnerEvent) => number | undefined,
+  current?: number,
+): TimelineRow[] {
+  const first = log[0]?.ts;
+  return stepIndices(log).map((at, index) => {
+    const event = log[at]!;
+    return {
+      index,
+      line: lineOf(event) ?? 0,
+      kind: event.t,
+      preview: rowPreview(event),
+      elapsedMs: first === undefined ? 0 : event.ts - first,
+      current: current === index,
+    };
+  });
+}

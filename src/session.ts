@@ -5,10 +5,19 @@ import { config } from "./configuration.ts";
 import { Commands, EXTENSION_ID, STEPPING_CONTEXT } from "./constants.ts";
 import { prepareRun } from "./instrument/index.ts";
 import { registerValueHover } from "./hover.ts";
-import { Aggregator, isStop, stepIndices, type SiteValues } from "./render/aggregate.ts";
+import {
+  Aggregator,
+  isStop,
+  stepIndices,
+  timelineRows,
+  type SiteValues,
+  type TimelineRow,
+} from "./render/aggregate.ts";
 import { Renderer } from "./render/decorations.ts";
 import { startRun, type RunHandle } from "./runner/client.ts";
 import { stageRunner } from "./runner/stage.ts";
+
+export type { TimelineRow };
 
 /** Host-side outcome of a lazy expansion ("gone": runner process is dead). */
 export type ExpandOutcome =
@@ -60,11 +69,12 @@ export class QuollSession implements vscode.Disposable {
   private updateQueued = false;
   /**
    * The current run's event log in `seq` order — the Time Machine's tape
-   * (phase 10). Only what the Aggregator folds is recorded; `done`/`exit`/
-   * `expandResult` carry no render state. In memory and per session: writing
+   * (phase 10) and the Timeline's rows (phase 11). Only what the Aggregator
+   * folds is recorded; `done`/`exit`/`expandResult` carry no render state.
+   * Whole messages, not bare events: `ts` is what the Timeline reads. In memory and per session: writing
    * it to disk is phase 15's job, which needs a file format anyway.
    */
-  private log: RunnerEvent[] = [];
+  private log: RunnerMsg[] = [];
   /** Did the tape hit `MAX_LOG`? The status bar says so, so a step forward
    * off the end isn't a silent jump over the events that were dropped. */
   private truncated = false;
@@ -74,6 +84,8 @@ export class QuollSession implements vscode.Disposable {
   private replay: Aggregator | undefined;
   /** Builds an Aggregator wired to THIS run's sites; replay re-folds with it. */
   private newAggregator: (() => Aggregator) | undefined;
+  /** This run's event → source line map, for Timeline rows (phase 11). */
+  private lineOf: ((event: RunnerEvent) => number | undefined) | undefined;
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   private readonly updateEmitter = new vscode.EventEmitter<void>();
   /** Fires (microtask-coalesced) when explorer-visible data changes. */
@@ -186,6 +198,7 @@ export class QuollSession implements vscode.Disposable {
     if (!prepared.ok) {
       this.agg = undefined;
       this.newAggregator = undefined;
+      this.lineOf = undefined;
       this.deps = new Set(); // a broken entry clears the watch graph until it parses again
       const errLines = new Map<number, string>();
       for (const err of prepared.errors) {
@@ -209,6 +222,20 @@ export class QuollSession implements vscode.Disposable {
         valuesMode,
       );
     this.agg = this.newAggregator();
+    // Same two attribution maps the Aggregator is given, in one lookup: value
+    // and perf carry a capture-site id, console and error a generated line.
+    this.lineOf = (event) => {
+      switch (event.t) {
+        case "value":
+        case "perf":
+          return prepared.sites.get(event.siteId)?.line;
+        case "console":
+        case "error":
+          return event.siteId === undefined ? undefined : prepared.toSourceLine(event.siteId);
+        default:
+          return undefined;
+      }
+    };
     this.deps = new Set(prepared.deps); // refresh the watch graph each run
     this.queueUpdate();
 
@@ -281,7 +308,7 @@ export class QuollSession implements vscode.Disposable {
    * reproduces what the editor showed at that moment, and `done`/`exit`/
    * `expandResult` fold to nothing.
    */
-  private record(msg: RunnerEvent): void {
+  private record(msg: RunnerMsg): void {
     switch (msg.t) {
       case "done":
       case "exit":
@@ -319,6 +346,17 @@ export class QuollSession implements vscode.Disposable {
     // Entering on the frame that equals live would shadow three keys to show
     // the user exactly what they are already looking at.
     if (this.step === undefined && target === stops.length - 1) return;
+    this.renderStop(target, stops);
+  }
+
+  /** Jump straight to one stop — the Timeline's click (phase 11). */
+  stepTo(target: number): void {
+    const stops = stepIndices(this.log);
+    if (target < 0 || target >= stops.length) return;
+    this.renderStop(target, stops);
+  }
+
+  private renderStop(target: number, stops: number[]): void {
     const agg = this.newAggregator?.();
     if (!agg) return; // the entry no longer parses; there is nothing to replay
     this.step = target;
@@ -336,7 +374,13 @@ export class QuollSession implements vscode.Disposable {
       agg.errorLines(),
     );
     this.showStep(target + 1, stops.length);
-    this.queueUpdate(); // explorer + hover follow the step
+    this.queueUpdate(); // explorer, hover and timeline follow the step
+  }
+
+  /** The run as Timeline rows, with the stepped frame marked (phase 11). */
+  timelineRows(): TimelineRow[] {
+    const lineOf = this.lineOf;
+    return lineOf ? timelineRows(this.log, lineOf, this.step) : [];
   }
 
   /** Leave the Time Machine: repaint from the live fold and resume painting. */

@@ -49,6 +49,11 @@ suite("Quoll extension", () => {
     await vscode.commands.executeCommand("quollValues.focus");
   });
 
+  test("timeline view can be focused", async () => {
+    // Resolves only if quollTimeline + its webview provider are registered.
+    await vscode.commands.executeCommand("quollTimeline.focus");
+  });
+
   test("configuration defaults match the manifest", () => {
     const config = vscode.workspace.getConfiguration("quoll");
     assert.strictEqual(config.get("denoPath"), "deno");
@@ -151,6 +156,42 @@ suite("Quoll extension", () => {
     await vscode.commands.executeCommand("quoll.live");
     const restored = await hoverAt(doc, inside);
     assert.ok(restored?.includes("6"), `resuming live should restore the run (got: ${restored})`);
+  });
+
+  // Timeline (phase 11) rides on the same tape: clicking a row is the command
+  // asserted here, and it must park the Time Machine on that stop — which the
+  // hover then reads back. The row-building itself is unit-tested in
+  // src/render/aggregate_test.ts (no vscode needed).
+  test("a timeline stop parks the Time Machine on that frame", async function () {
+    if (!hasNativeCore()) return this.skip();
+    const doc = await vscode.workspace.openTextDocument({
+      language: "typescript",
+      content: "const doubled = [1, 2, 3].map((n) => n * 2);\n",
+    });
+    await vscode.window.showTextDocument(doc);
+    await vscode.commands.executeCommand("quoll.start");
+
+    const inside = new vscode.Position(0, 39); // inside the callback's `n * 2`
+    const live = await waitFor(async () => {
+      const text = await hoverAt(doc, inside);
+      return text?.includes("6") ? text : undefined;
+    });
+    assert.ok(live, "expected the map callback's captures before jumping");
+
+    // Stop 0 is the run's first recorded value, so the callback cannot have
+    // produced its last capture yet.
+    const landed = await vscode.commands.executeCommand<boolean>("quoll.goToStop", 0);
+    assert.strictEqual(landed, true, "goToStop should report that it landed");
+    const atFirstStop = await hoverAt(doc, inside);
+    assert.ok(
+      atFirstStop === undefined || !atFirstStop.includes("6"),
+      `the first stop should predate the last capture (got: ${atFirstStop})`,
+    );
+
+    // An index from no run at all is refused rather than throwing.
+    await vscode.commands.executeCommand("quoll.stop");
+    const afterStop = await vscode.commands.executeCommand<boolean>("quoll.goToStop", 0);
+    assert.strictEqual(afterStop, false, "goToStop should refuse when no session is running");
   });
 });
 
