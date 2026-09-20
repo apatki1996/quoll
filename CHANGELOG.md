@@ -35,9 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Browser runtime** — `quoll.runtime: "browser"` installs a jsdom window's
   globals (`document`, `Element`, `localStorage`, …) before your code runs, so
   DOM code works in a scratchpad (Phase 7). jsdom is resolved from the
-  project's `node_modules` (`npm i -D jsdom`); the default stays `node`. This
-  is the only mode that grants the sandbox `--allow-env`, and it spawns the
-  runner with an empty environment so the grant hands out nothing.
+  project's `node_modules` (`npm i -D jsdom`), so browser mode needs a project;
+  the default stays `node`. This is the only mode that grants the sandbox
+  `--allow-env`, and it spawns the runner with a scrubbed environment so the
+  grant reaches nothing you've exported. Like `quoll.denoPath`, the setting is
+  machine-scoped — a workspace can't switch it on for you.
 
   Both reveal-on-demand features apply to quiet mode (`quoll.values: comments`),
   which is where opting a line in means anything — the `all` default already

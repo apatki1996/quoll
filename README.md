@@ -11,7 +11,7 @@ Quoll runs your JavaScript/TypeScript as you type and shows what your code actua
 - **Console output** — `console.log` results render inline at the call site
 - **Live comments** — mark a line with `//?` to single it out, or `//?.` to time it; `quoll.values: "comments"` shows only those
 - **Reveal on demand** — in that quiet mode, selecting an expression or setting a breakpoint reveals just that value
-- **Browser runtime** — `quoll.runtime: "browser"` gives your scratchpad a jsdom `document` (needs `jsdom` in the project)
+- **Browser runtime** — `quoll.runtime: "browser"` gives your scratchpad a jsdom `document` (needs `jsdom` in the project's `node_modules`)
 - **Value explorer** — a tree of the run's captured values, expanded lazily, with copy-to-clipboard
 - **Project imports** — import your own files; editing one re-runs the scratchpad
 - **TypeScript out of the box** — no build step or config needed
@@ -25,7 +25,7 @@ Checkout some [more examples](./examples/EXAMPLES.md).
 
 Quoll is in early, active development and is **not on the marketplace yet** — you run it from source (below).
 
-Everything in the list above works today, for single-file scratchpads. The roadmap (see [`quoll-spec.md`](quoll-spec.md), whose "Where the build actually is" section tracks what's done) targets full feature parity with Quokka.js: the time machine, interactive timeline and value graphs, CPU profiling, and more.
+Everything in the list above works today, for single-file scratchpads — except the browser runtime, which needs a project to resolve jsdom from. The roadmap (see [`quoll-spec.md`](quoll-spec.md), whose "Where the build actually is" section tracks what's done) targets full feature parity with Quokka.js: the time machine, interactive timeline and value graphs, CPU profiling, and more.
 
 ## How it works
 
@@ -41,7 +41,7 @@ Quoll isn't on the marketplace yet — you run it as a development extension.
 
 ```sh
 pnpm install
-node scripts/build-core.mjs   # builds the native instrumentation core
+pnpm run build:core   # builds the native instrumentation core
 pnpm run build
 ```
 
@@ -52,6 +52,21 @@ To run the test suite (the golden-eval harness):
 ```sh
 pnpm run eval
 ```
+
+## Settings
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `quoll.values` | `all` | `all` shows every expression's value inline; `comments` is a quiet mode showing only lines you opt into — a `//?` comment, the current selection, or a breakpoint. |
+| `quoll.runtime` | `node` | `browser` installs a jsdom window's globals (`document`, `Element`, `localStorage`, …) before your code runs. Needs `jsdom` in the project's `node_modules` (`npm i -D jsdom`), so it doesn't apply to a bare scratch buffer. |
+| `quoll.debounceMs` | `300` | How long after your last keystroke the file re-runs. |
+| `quoll.runTimeoutMs` | `10000` | Ceiling on how long a run waits for outstanding timers and promises. Quoll stays alive while they're pending, so a slow `setTimeout` still reports its value; this is what stops a `setInterval` running forever. |
+| `quoll.denoPath` | `deno` | Path to the Deno binary used for the sandbox. Auto-detected on first start. |
+
+`quoll.denoPath` and `quoll.runtime` are **machine-scoped**: they're settable in
+your own settings only, never by a workspace's `.vscode/settings.json`. Both
+choose how much the sandbox is allowed to do, so a repo you cloned to read
+shouldn't get to decide them.
 
 ## Contributing
 

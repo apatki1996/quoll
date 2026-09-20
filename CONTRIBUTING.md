@@ -18,6 +18,11 @@ pnpm run build        # bundle the extension host
 
 Press **F5** in VS Code to launch the extension development host.
 
+The Rust version is pinned in `/rust-toolchain.toml`, so rustup installs and
+selects it for you — don't reach for `rustup update`. Bump that file when an
+oxc update raises the MSRV (the build says so), in the same PR that takes the
+update and fixes whatever new clippy lints come with the newer compiler.
+
 ## Architecture: three process boundaries
 
 Quoll is three programs, and most organizing decisions follow from that. Keep
@@ -78,6 +83,7 @@ pnpm run lint:rust    # cargo clippy (Rust), fails on any warning
 pnpm run build:core   # native instrumentation core
 pnpm run typecheck    # tsc --noEmit
 pnpm run build        # esbuild bundle
+pnpm run check:bundle # the napi binary loads from the esbuild CJS bundle
 pnpm run test:unit    # Deno unit tests (Aggregator, resolver, serialization)
 pnpm run check:phase3 # source-map attribution
 pnpm run check:phase5 # expand-after-exit keep-alive
@@ -86,6 +92,9 @@ pnpm run check:jsdom  # browser runtime: jsdom globals, without displacing ours
 pnpm run eval         # golden-eval harness
 pnpm test             # VS Code integration tests (@vscode/test-electron)
 ```
+
+`pnpm test` runs `typecheck:tests` first via `pretest`, so there's no separate
+step for it.
 
 Everything that spawns the runner needs **Deno on PATH**. If you install it with
 [mise](https://mise.jdx.dev) (the repo pins a version), prefix the command:
