@@ -223,7 +223,11 @@ impl<'a> Instrumenter<'a> {
     /// Selection anchors that no capture span contained — the user selected a
     /// variable NAME, a keyword, an indent — fall back to LINE granularity, so
     /// double-clicking `x` in `const x = compute()` still reveals the line
-    /// instead of silently doing nothing. Only `expr` sites are re-tagged:
+    /// instead of silently doing nothing. The fallback matches a site's START
+    /// or END line, so an anchor on a MIDDLE line of a multi-line expression
+    /// still reveals nothing; that case is recorded as a known limitation
+    /// rather than fixed, since widening it would tag whole chains at once.
+    /// Only `expr` sites are re-tagged:
     /// `perf`, `branch` and `statement` encode mechanism rather than opt-in
     /// policy, and `comment` is opt-in already.
     pub fn resolve_unclaimed_selections(&mut self) {

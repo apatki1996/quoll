@@ -53,7 +53,8 @@ export type StartRunOpts = {
    * Phase 7 browser runtime: run with a jsdom window installed as globals.
    * This is the one mode that grants `--allow-env`, because jsdom's
    * dependencies enumerate `process.env` on load — so the subprocess is spawned
-   * with an EMPTY environment, and the grant hands out nothing.
+   * with a scrubbed environment holding only PATH (see below), and the grant
+   * reaches nothing else the user has exported.
    */
   browser: boolean;
   onMessage: (msg: RunnerMsg) => void;
@@ -81,7 +82,7 @@ export function startRun(opts: StartRunOpts): RunHandle {
   ];
   if (opts.projectRoot) args.push(`--allow-read=${opts.projectRoot}`);
   // See StartRunOpts.browser: the grant is paired with the scrubbed env below,
-  // so what user code can enumerate is an empty object either way.
+  // so all it can enumerate is the one variable we put there.
   if (opts.browser) args.push("--allow-env");
   args.push(opts.runnerMain, String(opts.runTimeoutMs), opts.browser ? "browser" : "node");
   const child = spawn(opts.denoPath, args, {
@@ -92,7 +93,11 @@ export function startRun(opts: StartRunOpts): RunHandle {
     // whatever Deno itself reads) untouched. PATH survives because denoPath
     // may legitimately be the bare "deno" (see candidatePaths) and the exec
     // lookup reads the CHILD's environment — dropping it would break the spawn
-    // rather than the sandbox.
+    // rather than the sandbox. So browser-mode user code CAN read PATH, and
+    // with it the home directory and installed toolchains: a disclosure, not a
+    // channel (net/write/run stay denied). Resolving denoPath to an absolute
+    // path in the host would let this be a truly empty env — worth doing if
+    // the disclosure ever matters.
     ...(opts.browser ? { env: { PATH: process.env.PATH ?? "" } } : {}),
   });
 
