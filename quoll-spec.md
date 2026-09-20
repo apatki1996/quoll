@@ -250,8 +250,10 @@ type RemoteValue = {
    the rest is `kind`-aware rendering.
 9. **Logpoints** — map VS Code breakpoints in Quoll files to `extraSites`
    capture positions; render like live comments.
-10. **Time Machine** — persist the per-run event log (already ordered by `seq`);
-    step forward/back re-rendering decorations from the log prefix.
+10. **Time Machine** — record the per-run event log (already ordered by `seq`);
+    step forward/back re-rendering decorations from the log prefix. *(Shipped:
+    an in-memory tape, replayed through the live `Aggregator`. Persisting it to
+    disk belongs to phase 15, which needs a file format regardless.)*
 11. **Interactive Timeline + Value Graphs** — webview consuming the same event
     log (color-coded function/line transitions, stack traces) and `RemoteValue`
     lazy expansion for visual data-structure graphs.
@@ -304,12 +306,17 @@ Kept current so the roadmap above reads as a plan, not a to-do list. The two
 highest-risk seams remain the source-map mapping and the serialization
 protocol — that is where a change looks right and is subtly wrong.
 
-**Done:** phases 0–9. Single-file JS/TS scratchpads run as you type with inline
+**Done:** phases 0–10. Single-file JS/TS scratchpads run as you type with inline
 values, coverage (incl. partial), inline errors, inline `console.log`, the value
 explorer with lazy `expand`, project imports with a transitive watch graph, live
 comments (`//?`, `//?.`, plus `quoll.values: "comments"` quiet mode), and — in
 quiet mode — value-on-selection and logpoints, both produced through
-`InstrumentOpts.extraSites`. Phase 7's hardening landed piecemeal; its jsdom
+`InstrumentOpts.extraSites`. Phase 10 (Time Machine) steps back and forth
+through a finished run by re-folding a PREFIX of its recorded event log
+through the same `Aggregator` the live render uses — no snapshot format, no
+second rendering path, no protocol change; the tape is in memory, per session.
+Values, console and errors rewind; the coverage gutter does not, because the
+runner flushes cover totals only at the end of a run. Phase 7's hardening landed piecemeal; its jsdom
 half ships as `quoll.runtime: "browser"`, which installs a jsdom window's
 globals before user code. That setting is `machine`-scoped like `quoll.denoPath`
 — browser mode is the one mode that widens the sandbox (`--allow-env`) and it
@@ -322,9 +329,9 @@ its captured value, with *Explore value* revealing it in the tree. Phase C
 `extraSites` work. Phase B (`inlineValues: "always" | "hover"`) is deliberately
 deferred.
 
-**Not started:** phases 10–15. Phases 10–11 stay cheap because the
-protocol pre-paid for them (`kind`, the `runId`/`seq` event log) — phase 9 bore
-that out, costing one core commit and no protocol change.
+**Not started:** phases 11–15. Phase 11 stays cheap for the reason phases 9 and
+10 did — the protocol pre-paid for it (`kind`, the `runId`/`seq` event log) —
+and it can consume the very tape phase 10 already records.
 
 **Known limitations** (each with a `DECISIONS.md` entry): out-of-order
 settlement of several promises captured at ONE site can mis-slot; Copy Value

@@ -22,6 +22,74 @@ entry states what the screenshot showed, so the reasoning stands without it.
 
 ---
 
+## 2026-09-20 — Phase 10 Time Machine: replay a log prefix, don't snapshot [DECIDED]
+
+- **Context:** Phase 10 in `quoll-spec.md` — step forward/back through a
+  finished run. The protocol pre-paid for it: every runner message already
+  carries `seq`, and the `Aggregator` is already a pure fold over that stream
+  with no vscode in it.
+- **Decision:** The session records each run's Aggregator-folded events into an
+  in-memory tape (`done`/`exit`/`expandResult` fold to nothing, so they aren't
+  recorded). A step builds a SECOND `Aggregator` over this run's sites and
+  folds `log[0..stop]` into it — the same class, same rules as live — then
+  paints that snapshot. Live painting is frozen while stepping; a new run
+  resets the tape and resumes live.
+  - `stepIndices` (in `aggregate.ts`, next to the fold it belongs to) picks the
+    stops: `value` / `console` / `error` / `perf` — the events emitted AS THEY
+    HAPPEN, so a prefix of them is a truthful picture of a moment.
+  - **Coverage is not stepped.** The runner batches cover totals and flushes
+    them once the run is over (`flushCover`, `runner/main.ts`), so every cover
+    event sits after the last value in the tape and a prefix of a synchronous
+    run contains none of them. Re-deriving the gutter from a prefix would
+    therefore paint the whole file red at every stop. Coverage is a fact about
+    the whole run rather than about a moment in it, so the live gutter stays
+    put while stepping; only values, console and errors rewind. (Caught in
+    review — the first draft claimed cover "replays as part of each prefix",
+    which is true of the data structure and false of the actual event order.)
+  - Stepping moves the whole editor, not just the inline values: hover and the
+    value explorer read the stepped fold through one `current()` accessor.
+  - Entering is a palette/status-bar action; `alt+left`/`alt+right`/`escape`
+    are bound only under the `quoll.stepping` context key, so the mode shadows
+    those keys only while you are in it. It does shadow them: on macOS
+    `alt+arrow` is word navigation, and `escape` is VS Code's universal
+    dismiss. Accepted because stepping is a mode with a visible status-bar
+    indicator and a one-key exit — unlike a global binding, nothing is taken
+    from anyone who never enters it.
+  - The tape is capped at the FIRST 5000 events. A hot loop outruns any
+    stepper, and evicting the head would renumber every stop under the user
+    mid-session. When the cap is hit the status bar says so (`3/5000+`, with a
+    tooltip), because stepping forward off a truncated tape lands on live
+    rather than on the next event — a jump the user would otherwise not see
+    coming. The counter also keeps updating while a run is still streaming, so
+    a frozen editor in a growing run doesn't read as a hang.
+- **Rejected:**
+  - *Snapshotting rendered state per step* — two representations of one run
+    that can disagree. Replaying the log through the real aggregator means a
+    Time Machine frame is wrong only if the live render was wrong too.
+  - *Persisting the log to disk* — that's phase 15 (sharing), which needs a
+    file format and a retained-preview story anyway. Stepping a run you are
+    looking at needs neither.
+  - *Stepping per event, including `cover`* — truthful and unusable.
+  - *A second `Aggregator` kept incrementally in sync* — a rebuild over ≤5000
+    events is microseconds and can't drift.
+  - *Stepping the runner itself (re-execute to a point)* — re-running user code
+    to show the past is both slow and a side-effect hazard. The log is already
+    the record.
+- **Revisit if:** a real run hits the 5000-event cap (then window the tape, and
+  say so in the status bar), or stepping through a long run feels like it needs
+  stops at function boundaries rather than at values — that's phase 11's
+  timeline, not a change here.
+- **Covered by:** `stepIndices` + prefix-replay unit tests in
+  `src/render/aggregate_test.ts` — including a promise that un-settles when you
+  step back before it resolved (which is what a fresh aggregator per frame buys
+  over an incrementally-updated one), and one that pins the cover ordering
+  above so the coverage decision can't be quietly reverted — plus an
+  integration test in
+  `src/test/extension.test.ts` that steps a real run and reads the rewound
+  values back through the hover.
+
+---
+
 ## 2026-09-17 — The Rust toolchain is pinned; MSRV is declared separately [DECIDED]
 
 - **Context:** `cargo clippy -- -D warnings` ran on a floating `stable`, so

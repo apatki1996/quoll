@@ -33,6 +33,11 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(Commands.exploreValue, (siteId: number) =>
       explorer.reveal(siteId),
     ),
+    // Time Machine (phase 10). No-ops without a session — the keybindings are
+    // gated on the stepping context key, but the palette entries are not.
+    vscode.commands.registerCommand(Commands.stepBack, () => session?.stepBy(-1)),
+    vscode.commands.registerCommand(Commands.stepForward, () => session?.stepBy(1)),
+    vscode.commands.registerCommand(Commands.live, () => session?.goLive()),
   );
   output.appendLine("[quoll] activated");
 }

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Time Machine** — step back and forth through a finished run (Phase 10).
+  *Quoll: Step Back* enters it (`alt+left`/`alt+right` to move, `escape` to
+  leave, or click the status bar), and the editor — inline values, errors,
+  hovers and the value explorer — re-renders as it stood at that moment. It
+  replays a prefix of the run's event log through the same aggregator the live
+  render uses, so there is no second version of the truth. The coverage gutter
+  is the exception and stays put: it describes the whole run, not one moment
+  in it.
 - **Value peek** — hover any expression to see the value it produced, with each
   capture listed for a line that ran more than once. Reads the current run's
   values (no re-run), works in quiet mode, and offers *Explore value* to reveal

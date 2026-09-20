@@ -38,8 +38,8 @@ suite("Quoll extension", () => {
     for (const command of declared) {
       assert.ok(registered.includes(command), `command not registered: ${command}`);
     }
-    // Spot-check the three we depend on, in case the manifest is ever emptied.
-    for (const command of ["quoll.start", "quoll.stop", "quoll.copyValue"]) {
+    // Spot-check the ones we depend on, in case the manifest is ever emptied.
+    for (const command of ["quoll.start", "quoll.stop", "quoll.copyValue", "quoll.stepBack"]) {
       assert.ok(declared.includes(command), `command not declared in manifest: ${command}`);
     }
   });
@@ -117,6 +117,41 @@ suite("Quoll extension", () => {
     );
     assert.strictEqual(revealed, true, "Explore Value should reveal the site in the values tree");
   });
+
+  // Time Machine (phase 10): stepping back re-renders the run from a PREFIX of
+  // its event log. Asserted through the hover, the only stepped surface a test
+  // can read back (editor decorations aren't queryable from the host), which
+  // also proves the step moves more than the inline values.
+  test("stepping back rewinds captured values; live restores them", async function () {
+    if (!hasNativeCore()) return this.skip();
+    const doc = await vscode.workspace.openTextDocument({
+      language: "typescript",
+      content: "const doubled = [1, 2, 3].map((n) => n * 2);\n",
+    });
+    await vscode.window.showTextDocument(doc);
+    await vscode.commands.executeCommand("quoll.start");
+
+    const inside = new vscode.Position(0, 39); // inside the callback's `n * 2`
+    const live = await waitFor(async () => {
+      const text = await hoverAt(doc, inside);
+      return text?.includes("6") ? text : undefined;
+    });
+    assert.ok(live, "expected the map callback's captures (2, 4, 6) in a hover");
+
+    // The run's last event isn't necessarily this site's, so step until this
+    // site actually loses its last capture — bounded, it's a handful of events.
+    let rewound: string | undefined;
+    for (let i = 0; i < 20 && rewound === undefined; i++) {
+      await vscode.commands.executeCommand("quoll.stepBack");
+      const text = await hoverAt(doc, inside);
+      if (text !== undefined && !text.includes("6")) rewound = text;
+    }
+    assert.ok(rewound, `stepping back never dropped a capture (still: ${live})`);
+
+    await vscode.commands.executeCommand("quoll.live");
+    const restored = await hoverAt(doc, inside);
+    assert.ok(restored?.includes("6"), `resuming live should restore the run (got: ${restored})`);
+  });
 });
 
 /**
@@ -137,6 +172,20 @@ function hasNativeCore(): boolean {
     assert.fail("QUOLL_REQUIRE_NATIVE=1 but the native core is missing — did build:core move?");
   }
   return found;
+}
+
+/** Quoll's hover at a position (the one carrying the Explore value link). */
+async function hoverAt(
+  doc: vscode.TextDocument,
+  position: vscode.Position,
+): Promise<string | undefined> {
+  const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+    "vscode.executeHoverProvider",
+    doc.uri,
+    position,
+  );
+  const hover = hovers.find((h) => hoverText(h).includes("Explore value"));
+  return hover && hoverText(hover);
 }
 
 function hoverText(hover: vscode.Hover): string {

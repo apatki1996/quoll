@@ -211,3 +211,37 @@ export class Aggregator {
     return best;
   }
 }
+
+/**
+ * Event kinds worth stopping at when stepping through a recorded run (phase
+ * 10 Time Machine): the ones emitted AS THEY HAPPEN, so a prefix of them is a
+ * truthful picture of a moment in the run.
+ *
+ * `cover` is excluded, and not only because coverage would put hundreds of
+ * gutter-only stops between two values: the runner batches cover totals and
+ * flushes them once the run is over (`flushCover`, runner/main.ts), so they
+ * don't sit at a meaningful place in the log at all. Coverage is a fact about
+ * the whole run rather than about a moment in it — the session keeps painting
+ * the live gutter while stepping instead of re-deriving it from a prefix,
+ * which would show a file that is entirely red.
+ */
+const STEP_KINDS = new Set(["value", "console", "error", "perf"]);
+
+/** Is this an event a user can step to? (The one definition; see STEP_KINDS.) */
+export function isStop(event: RunnerEvent): boolean {
+  return STEP_KINDS.has(event.t);
+}
+
+/**
+ * Indices in a recorded event log of the stops a user steps between. The state
+ * shown at a stop is `new Aggregator(...)` folded over `log[0..index]` — the
+ * same aggregator, the same rules as live, so Time Machine has no second
+ * rendering path that could disagree with the first.
+ */
+export function stepIndices(log: readonly RunnerEvent[]): number[] {
+  const stops: number[] = [];
+  for (let i = 0; i < log.length; i++) {
+    if (isStop(log[i]!)) stops.push(i);
+  }
+  return stops;
+}

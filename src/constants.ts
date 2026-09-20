@@ -12,7 +12,13 @@ export const Commands = {
   stop: "quoll.stop",
   copyValue: "quoll.copyValue",
   exploreValue: "quoll.exploreValue",
+  stepBack: "quoll.stepBack",
+  stepForward: "quoll.stepForward",
+  live: "quoll.live",
 } as const;
+
+/** Context key gating the Time Machine keybindings (true while stepping). */
+export const STEPPING_CONTEXT = "quoll.stepping";
 
 /** View IDs from `contributes.views`. */
 export const Views = {

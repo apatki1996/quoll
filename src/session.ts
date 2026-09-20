@@ -1,11 +1,11 @@
 import { dirname } from "node:path";
 import * as vscode from "vscode";
-import type { ExtraSite, RemoteValue, RunnerMsg } from "../protocol/index.ts";
+import type { ExtraSite, RemoteValue, RunnerEvent, RunnerMsg } from "../protocol/index.ts";
 import { config } from "./configuration.ts";
-import { EXTENSION_ID } from "./constants.ts";
+import { Commands, EXTENSION_ID, STEPPING_CONTEXT } from "./constants.ts";
 import { prepareRun } from "./instrument/index.ts";
 import { registerValueHover } from "./hover.ts";
-import { Aggregator, type SiteValues } from "./render/aggregate.ts";
+import { Aggregator, isStop, stepIndices, type SiteValues } from "./render/aggregate.ts";
 import { Renderer } from "./render/decorations.ts";
 import { startRun, type RunHandle } from "./runner/client.ts";
 import { stageRunner } from "./runner/stage.ts";
@@ -16,6 +16,15 @@ export type ExpandOutcome =
   | { error: "evicted" | "unknown" | "gone" };
 
 const EXPAND_TIMEOUT_MS = 3000;
+
+/**
+ * Ceiling on the recorded event log. A hot loop emits faster than anyone can
+ * step, so the tape keeps the FIRST events and stops recording — the start of
+ * a run is what you step forward from, and dropping the head to keep the tail
+ * would move every stop index under the user mid-session.
+ * ponytail: one flat cap; sample or window it only if a real run hits it.
+ */
+const MAX_LOG = 5000;
 
 /**
  * This document's enabled breakpoints as logpoint sites (Phase 9). A breakpoint
@@ -49,6 +58,23 @@ export class QuollSession implements vscode.Disposable {
   /** Serialized `extraSites()` of the last run — the re-run change detector. */
   private extraKey = "";
   private updateQueued = false;
+  /**
+   * The current run's event log in `seq` order — the Time Machine's tape
+   * (phase 10). Only what the Aggregator folds is recorded; `done`/`exit`/
+   * `expandResult` carry no render state. In memory and per session: writing
+   * it to disk is phase 15's job, which needs a file format anyway.
+   */
+  private log: RunnerEvent[] = [];
+  /** Did the tape hit `MAX_LOG`? The status bar says so, so a step forward
+   * off the end isn't a silent jump over the events that were dropped. */
+  private truncated = false;
+  /** Position in `stepIndices(log)` while stepping; `undefined` = live. */
+  private step: number | undefined;
+  /** Fold over the tape's prefix at `step` — what's rendered while stepping. */
+  private replay: Aggregator | undefined;
+  /** Builds an Aggregator wired to THIS run's sites; replay re-folds with it. */
+  private newAggregator: (() => Aggregator) | undefined;
+  private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   private readonly updateEmitter = new vscode.EventEmitter<void>();
   /** Fires (microtask-coalesced) when explorer-visible data changes. */
   readonly onDidUpdate = this.updateEmitter.event;
@@ -153,9 +179,13 @@ export class QuollSession implements vscode.Disposable {
     );
     this.failPendingExpands();
     this.renderer.clear();
+    this.log = []; // a new run is a new tape
+    this.truncated = false;
+    this.goLive();
 
     if (!prepared.ok) {
       this.agg = undefined;
+      this.newAggregator = undefined;
       this.deps = new Set(); // a broken entry clears the watch graph until it parses again
       const errLines = new Map<number, string>();
       for (const err of prepared.errors) {
@@ -167,11 +197,18 @@ export class QuollSession implements vscode.Disposable {
       return; // wait for the next edit; nothing runnable
     }
 
-    this.agg = new Aggregator(
-      prepared.sites,
-      (id) => (id === undefined ? undefined : prepared.toSourceLine(id)),
-      config.values(),
-    );
+    // Kept as a factory, not just an instance: replaying a prefix of the tape
+    // needs a SECOND aggregator wired to this run's sites, and `config.values()`
+    // is read once here so a mid-run settings change can't make a replay
+    // disagree with what the live render showed.
+    const valuesMode = config.values();
+    this.newAggregator = () =>
+      new Aggregator(
+        prepared.sites,
+        (id) => (id === undefined ? undefined : prepared.toSourceLine(id)),
+        valuesMode,
+      );
+    this.agg = this.newAggregator();
     this.deps = new Set(prepared.deps); // refresh the watch graph each run
     this.queueUpdate();
 
@@ -199,6 +236,7 @@ export class QuollSession implements vscode.Disposable {
 
   private onMessage(msg: RunnerMsg): void {
     if (msg.runId !== this.runId) return; // stale run
+    this.record(msg);
     this.agg?.ingest(msg); // fold value/console/cover/error into render state
     switch (msg.t) {
       case "value":
@@ -238,6 +276,95 @@ export class QuollSession implements vscode.Disposable {
   }
 
   /**
+   * Append to the run's tape. Only Aggregator-folded events are recorded: the
+   * tape's whole contract is that replaying a prefix through an Aggregator
+   * reproduces what the editor showed at that moment, and `done`/`exit`/
+   * `expandResult` fold to nothing.
+   */
+  private record(msg: RunnerEvent): void {
+    switch (msg.t) {
+      case "done":
+      case "exit":
+      case "expandResult":
+        return;
+      default:
+        if (this.log.length >= MAX_LOG) {
+          this.truncated = true;
+          return;
+        }
+        this.log.push(msg);
+        // A run can still be streaming (timers, late promises) while the user
+        // stands in the Time Machine, and live painting is frozen there — so
+        // the counter growing under them is the only sign the run isn't over.
+        if (this.step !== undefined && isStop(msg)) {
+          this.showStep(this.step + 1, stepIndices(this.log).length);
+        }
+    }
+  }
+
+  /**
+   * Move `delta` stops through the recorded run, entering the Time Machine
+   * from live if needed (live == every stop applied, so stepping back from
+   * live lands on the second-to-last). Stepping past the end resumes live
+   * rather than stalling on the final frame — that frame IS live.
+   */
+  stepBy(delta: number): void {
+    const stops = stepIndices(this.log);
+    if (stops.length === 0) return;
+    const target = Math.max(0, (this.step ?? stops.length - 1) + delta);
+    if (target >= stops.length) {
+      this.goLive(); // stepped off the end; the tape's last frame is live
+      return;
+    }
+    // Entering on the frame that equals live would shadow three keys to show
+    // the user exactly what they are already looking at.
+    if (this.step === undefined && target === stops.length - 1) return;
+    const agg = this.newAggregator?.();
+    if (!agg) return; // the entry no longer parses; there is nothing to replay
+    this.step = target;
+    const upTo = stops[target]! + 1;
+    for (let i = 0; i < upTo; i++) agg.ingest(this.log[i]!);
+    this.replay = agg;
+    // Values, console and errors come from the prefix — they were emitted as
+    // they happened. Coverage does NOT: the runner batches cover totals and
+    // flushes them when the run ends, so a prefix holds none of them and
+    // re-deriving the gutter would paint every line red. Coverage is a
+    // whole-run fact, so the live gutter stays put while stepping.
+    this.renderer.setSnapshot(
+      agg.lineValues(),
+      this.agg?.coverage() ?? new Map(),
+      agg.errorLines(),
+    );
+    this.showStep(target + 1, stops.length);
+    this.queueUpdate(); // explorer + hover follow the step
+  }
+
+  /** Leave the Time Machine: repaint from the live fold and resume painting. */
+  goLive(): void {
+    if (this.step === undefined) return;
+    this.step = undefined;
+    this.replay = undefined;
+    this.showStep();
+    this.scheduleRender();
+    this.queueUpdate();
+  }
+
+  /** Status bar + the context key the stepping keybindings are gated on. */
+  private showStep(position?: number, total?: number): void {
+    if (position === undefined) {
+      this.status.hide();
+    } else {
+      this.status.text = `$(history) Quoll ${position}/${total}${this.truncated ? "+" : ""}`;
+      this.status.tooltip = this.truncated
+        ? `Quoll Time Machine — this run outran the ${MAX_LOG}-event tape, so stepping forward past the last recorded stop jumps straight to live. Click to resume live.`
+        : "Quoll Time Machine — click to resume live";
+      this.status.command = Commands.live;
+      this.status.show();
+    }
+    void vscode.commands.executeCommand("setContext", STEPPING_CONTEXT, position !== undefined);
+  }
+
+  /**
    * Lazy expansion against the runner — which lingers after `exit` precisely
    * for this (see protocol). "gone" when the process died or never answers.
    */
@@ -261,14 +388,23 @@ export class QuollSession implements vscode.Disposable {
     });
   }
 
+  /**
+   * The fold the UI reads: the stepped prefix while in the Time Machine, the
+   * live one otherwise. Explorer, hover and decorations all go through it, so
+   * a step moves the whole editor back in time, not just the inline values.
+   */
+  private current(): Aggregator | undefined {
+    return this.step === undefined ? this.agg : this.replay;
+  }
+
   /** Explorer roots: the current run's captured values, by source line. */
   valueRoots(): { siteId: number; line: number; values: RemoteValue[] }[] {
-    return this.agg?.valueSites() ?? [];
+    return this.current()?.valueSites() ?? [];
   }
 
   /** Hover lookup: values captured at the innermost site covering a position. */
   siteAt(line: number, column: number): SiteValues | undefined {
-    return this.agg?.siteAt(line, column);
+    return this.current()?.siteAt(line, column);
   }
 
   private failPendingExpands(): void {
@@ -298,12 +434,15 @@ export class QuollSession implements vscode.Disposable {
     queueMicrotask(() => {
       this.renderQueued = false;
       if (runId !== this.runId || !this.agg) return; // superseded by a newer run
+      if (this.step !== undefined) return; // frozen: the Time Machine owns the paint
       this.renderer.setSnapshot(this.agg.lineValues(), this.agg.coverage(), this.agg.errorLines());
     });
   }
 
   dispose(): void {
     if (this.debounce !== undefined) clearTimeout(this.debounce);
+    this.showStep(); // drop the context key so keybindings don't outlive the session
+    this.status.dispose();
     this.failPendingExpands();
     this.run?.cancel();
     this.renderer.dispose();

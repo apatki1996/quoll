@@ -47,6 +47,18 @@
       {
         "command": "quoll.exploreValue",
         "title": "Explore Value"
+      },
+      {
+        "command": "quoll.stepBack",
+        "title": "Quoll: Step Back (Time Machine)"
+      },
+      {
+        "command": "quoll.stepForward",
+        "title": "Quoll: Step Forward (Time Machine)"
+      },
+      {
+        "command": "quoll.live",
+        "title": "Quoll: Resume Live"
       }
     ],
     "views": {
@@ -132,7 +144,24 @@
           "description": "Which runtime the file runs in. 'browser' installs a jsdom window's globals before your code loads, so DOM code runs in the scratchpad; jsdom is resolved from the project's node_modules (npm i -D jsdom). Machine-scoped, like quoll.denoPath: browser mode widens the sandbox (it grants --allow-env) and loads the project's own jsdom on every run, so it has to be your choice, not a cloned repo's."
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "quoll.stepBack",
+        "key": "alt+left",
+        "when": "quoll.stepping"
+      },
+      {
+        "command": "quoll.stepForward",
+        "key": "alt+right",
+        "when": "quoll.stepping"
+      },
+      {
+        "command": "quoll.live",
+        "key": "escape",
+        "when": "quoll.stepping && editorTextFocus && !suggestWidgetVisible && !findWidgetVisible && !parameterHintsVisible && !inSnippetMode && !renameInputVisible"
+      }
+    ]
   },
   "scripts": {
     "prepare": "git config core.hooksPath .githooks",
