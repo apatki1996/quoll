@@ -21,10 +21,16 @@ separate Deno process started with an explicit permission set. In scope:
 
 - **Sandbox escape** — instrumented user code reaching the filesystem, network,
   environment, or subprocesses beyond the permissions the runner was granted.
+  Those permissions are deny-all plus, at most, read access scoped to the
+  project; `quoll.runtime: "browser"` additionally grants `--allow-env`, and the
+  runner is spawned with a scrubbed environment (PATH only) so that grant
+  reaches nothing else. Anything readable beyond PATH there is a bug.
 - **Host compromise from a workspace** — anything a cloned repo can do to the
   extension host by virtue of being opened (settings, workspace files, `//?`
-  comments, module specifiers). `quoll.denoPath` is machine-scoped for this
-  reason; a workspace override that redirects the sandbox binary is a bug.
+  comments, module specifiers). `quoll.denoPath` and `quoll.runtime` are
+  machine-scoped for this reason: a workspace override that redirects the
+  sandbox binary, or that switches on browser mode (widening permissions and
+  loading the repo's own jsdom on every run), is a bug.
 - **Instrumentation core** — memory safety in `crates/quoll-core/`, or
   instrumented output that changes program semantics in an exploitable way.
 

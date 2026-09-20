@@ -40,7 +40,8 @@
   deliberate simplification vs. real Quokka; collapses the host layer to one
   decoration API). Quokka's multi-editor support is explicitly NOT a parity target.
 - JS + TS + JSX/TSX. **Node-style target first** (Deno runner); browser/jsdom
-  support is phase 7.
+  support is phase 7 — shipped, opt-in via `quoll.runtime`, Node-style still
+  the default.
 - **v1 features:** inline runtime values, coverage gutter, value explorer, inline errors.
 - **Non-goals (for now):** a Quokka-style plugins API, a hosted sharing service.
   Revisit post-parity.
@@ -260,7 +261,9 @@ type RemoteValue = {
 13. **Snaps** — run snippets inside Vue/Svelte SFCs: extract the `<script>`
     block, offset-shift positions into the instrumentation pass.
 14. **Quick Package Install + config** — install npm packages from the editor;
-    `.quoll` config (env vars, runtime version, jsdom toggle, tsconfig paths).
+    `.quoll` config (env vars, runtime version, tsconfig paths). The jsdom
+    toggle this listed already exists as the `quoll.runtime` setting; what is
+    left here is per-project config as a checked-in file.
 15. **Sharing (Codeclip-style)** — export a run recording (source + event log +
     retained previews) as a file or gist; hosted service out of scope.
 
@@ -301,15 +304,17 @@ Kept current so the roadmap above reads as a plan, not a to-do list. The two
 highest-risk seams remain the source-map mapping and the serialization
 protocol — that is where a change looks right and is subtly wrong.
 
-**Done:** phases 0–6, 8 and 9. Single-file JS/TS scratchpads run as you type
-with inline values, coverage (incl. partial), inline errors, inline
-`console.log`, the value explorer with lazy `expand`, project imports with a
-transitive watch graph, live comments (`//?`, `//?.`, plus `quoll.values:
-"comments"` quiet mode), and — in quiet mode — value-on-selection and logpoints,
-both produced through `InstrumentOpts.extraSites`. Phase 7's hardening landed
-piecemeal, and its jsdom half now ships as `quoll.runtime: "browser"` — a jsdom
-window's globals installed before user code, with jsdom resolved from the
-project's `node_modules`.
+**Done:** phases 0–9. Single-file JS/TS scratchpads run as you type with inline
+values, coverage (incl. partial), inline errors, inline `console.log`, the value
+explorer with lazy `expand`, project imports with a transitive watch graph, live
+comments (`//?`, `//?.`, plus `quoll.values: "comments"` quiet mode), and — in
+quiet mode — value-on-selection and logpoints, both produced through
+`InstrumentOpts.extraSites`. Phase 7's hardening landed piecemeal; its jsdom
+half ships as `quoll.runtime: "browser"`, which installs a jsdom window's
+globals before user code. That setting is `machine`-scoped like `quoll.denoPath`
+— browser mode is the one mode that widens the sandbox (`--allow-env`) and it
+loads the project's own jsdom on every run, so a cloned repo must not be able to
+switch it on.
 
 Beyond the numbered phases: **Value Peek phase A** — hover an expression to see
 its captured value, with *Explore value* revealing it in the tree. Phase C
@@ -323,7 +328,10 @@ that out, costing one core commit and no protocol change.
 
 **Known limitations** (each with a `DECISIONS.md` entry): out-of-order
 settlement of several promises captured at ONE site can mis-slot; Copy Value
-copies the rendered preview, not a deep serialization.
+copies the rendered preview, not a deep serialization; a selection anchored on a
+MIDDLE line of a multi-line expression reveals nothing (the line fallback
+matches a site's start or end line only); browser mode needs a project to
+resolve jsdom from, so it does not work in a bare scratch buffer.
 
 **Not shipped:** nothing is on the marketplace and there is no CD pipeline. The
 manifest packages cleanly (`vsce package`), but the VSIX carries only the host
