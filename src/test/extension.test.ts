@@ -54,6 +54,23 @@ suite("Quoll extension", () => {
     await vscode.commands.executeCommand("quollTimeline.focus");
   });
 
+  test("both views live in the Quoll panel, not the side bar", () => {
+    // Placement is a manifest-only fact, so only the manifest can assert it —
+    // focusing a view works wherever it is contributed.
+    const contributes = vscode.extensions.getExtension(EXTENSION_ID)!.packageJSON.contributes;
+    const panels: { id: string }[] = contributes.viewsContainers?.panel ?? [];
+    assert.ok(
+      panels.some((c) => c.id === "quollPanel"),
+      "expected a quollPanel container in the bottom panel",
+    );
+    assert.deepStrictEqual(
+      (contributes.views.quollPanel ?? []).map((v: { id: string }) => v.id),
+      ["quollValues", "quollTimeline"],
+      "both views belong to the panel container",
+    );
+    assert.strictEqual(contributes.views.explorer, undefined, "nothing should remain in explorer");
+  });
+
   test("configuration defaults match the manifest", () => {
     const config = vscode.workspace.getConfiguration("quoll");
     assert.strictEqual(config.get("denoPath"), "deno");

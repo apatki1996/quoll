@@ -22,6 +22,40 @@ entry states what the screenshot showed, so the reasoning stands without it.
 
 ---
 
+## 2026-09-25 — Quoll's views belong in the Panel, not the Side Bar [DECIDED]
+
+- **Context:** Values and the new Timeline were contributed to the `explorer`
+  container, so they sat in the primary side bar under the file tree. Checked
+  against Quokka, whose own docs are the reference: its entire UI is a **QUOKKA
+  tab in the bottom panel**, split LOGS | QUOKKA SCRATCH, with the Time Machine
+  and value graphs reached from that pane's toolbar
+  (`screenshots/quokka/frame-main.png`, from the Quokka v2 announcement).
+- **Decision:** One `quollPanel` viewsContainer in `contributes.viewsContainers.panel`,
+  holding both views, which are renamed `Values` and `Timeline` (the container
+  is already called Quoll). Nothing stays in `explorer`.
+  - The panel is where a run's *output* goes in VS Code's own model — Problems,
+    Output, Terminal, Debug Console are all there, and Quoll's values are the
+    same kind of thing. See the VS Code UI docs on Panel vs Primary Side Bar.
+  - It is also the shape the content wants: value previews and Timeline rows
+    are wide and short, so horizontal room helps and side-bar width hurts. And
+    it stops Quoll competing with the file tree for vertical space in the one
+    container a user always has open.
+- **Rejected:**
+  - *Leaving them in the side bar* — what shipped in phases 5 and 11a, and what
+    prompted this; it was never a considered choice, just the `yo code`
+    default.
+  - *A dedicated activity-bar container* — a third place to look, and the
+    activity bar is for navigation surfaces you dwell in, not run output.
+  - *Making it configurable* — VS Code already lets a user drag a view
+    anywhere; a setting would just be a second, worse way to do that.
+- **Revisit if:** the Timeline grows the horizontal strip + step view Quokka
+  has (`screenshots/quokka/ttd-interactive-timeline.png`), which may want more
+  height than a panel comfortably gives.
+- **Covered by:** a manifest assertion in `src/test/extension.test.ts` —
+  placement is a manifest-only fact, so focusing a view can't test it.
+
+---
+
 ## 2026-09-20 — Phase 11a Timeline: one tape, two front ends [DECIDED]
 
 - **Context:** Phase 11 is "Interactive Timeline + Value Graphs — webview

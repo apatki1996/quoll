@@ -9,7 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Interactive Timeline** — a *Quoll Timeline* view listing the run as it
+- **A Quoll panel** — the Values tree and the Timeline now live in a *Quoll*
+  tab in the bottom panel, beside Problems and Terminal, instead of the primary
+  side bar. That's where a run's output belongs: it gets horizontal room for
+  value previews, and it stops competing with the file tree for vertical space.
+- **Interactive Timeline** — a *Timeline* view listing the run as it
   happened: one row per captured moment, colour-coded by kind, with its source
   line and offset in time. Click a row to park the Time Machine on that moment
   and scroll to the line. It reads the same tape the Time Machine steps, so the
@@ -26,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Value peek** — hover any expression to see the value it produced, with each
   capture listed for a line that ran more than once. Reads the current run's
   values (no re-run), works in quiet mode, and offers *Explore value* to reveal
-  that expression in the Quoll Values tree.
+  that expression in the Quoll panel's Values tree.
 - **Full text on truncated inline values** — an inline decoration clipped at 120
   characters now carries the untruncated text as a hover instead of dropping it.
 - **`quoll.runTimeoutMs`** — how long a run keeps waiting for outstanding

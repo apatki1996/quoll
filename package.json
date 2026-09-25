@@ -65,16 +65,42 @@
         "title": "Go to Timeline Stop"
       }
     ],
+    "keybindings": [
+      {
+        "command": "quoll.stepBack",
+        "key": "alt+left",
+        "when": "quoll.stepping"
+      },
+      {
+        "command": "quoll.stepForward",
+        "key": "alt+right",
+        "when": "quoll.stepping"
+      },
+      {
+        "command": "quoll.live",
+        "key": "escape",
+        "when": "quoll.stepping && editorTextFocus && !suggestWidgetVisible && !findWidgetVisible && !parameterHintsVisible && !inSnippetMode && !renameInputVisible"
+      }
+    ],
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "quollPanel",
+          "title": "Quoll",
+          "icon": "$(symbol-value)"
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "quollPanel": [
         {
           "id": "quollValues",
-          "name": "Quoll Values",
+          "name": "Values",
           "icon": "$(symbol-value)"
         },
         {
           "id": "quollTimeline",
-          "name": "Quoll Timeline",
+          "name": "Timeline",
           "type": "webview",
           "icon": "$(history)"
         }
@@ -158,24 +184,7 @@
           "description": "Which runtime the file runs in. 'browser' installs a jsdom window's globals before your code loads, so DOM code runs in the scratchpad; jsdom is resolved from the project's node_modules (npm i -D jsdom). Machine-scoped, like quoll.denoPath: browser mode widens the sandbox (it grants --allow-env) and loads the project's own jsdom on every run, so it has to be your choice, not a cloned repo's."
         }
       }
-    },
-    "keybindings": [
-      {
-        "command": "quoll.stepBack",
-        "key": "alt+left",
-        "when": "quoll.stepping"
-      },
-      {
-        "command": "quoll.stepForward",
-        "key": "alt+right",
-        "when": "quoll.stepping"
-      },
-      {
-        "command": "quoll.live",
-        "key": "escape",
-        "when": "quoll.stepping && editorTextFocus && !suggestWidgetVisible && !findWidgetVisible && !parameterHintsVisible && !inSnippetMode && !renameInputVisible"
-      }
-    ]
+    }
   },
   "scripts": {
     "prepare": "git config core.hooksPath .githooks",

@@ -55,6 +55,8 @@ To run the test suite (the golden-eval harness):
 pnpm run eval
 ```
 
+Both views live in a **Quoll** tab in the bottom panel, next to Problems and Terminal.
+
 ## Commands
 
 | Command | What it does |
