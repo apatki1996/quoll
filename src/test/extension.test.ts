@@ -44,13 +44,12 @@ suite("Quoll extension", () => {
     }
   });
 
-  test("values view can be focused", async () => {
-    // Resolves only if the quollValues view + its tree data provider are wired.
+  // `<id>.focus` is generated from the MANIFEST's views contribution, so these
+  // prove the ids are contributed and focusable — NOT that a provider is
+  // registered behind them (deleting a registerX call leaves them passing).
+  // The providers are covered by the tests that read real run data below.
+  test("contributed view ids are focusable", async () => {
     await vscode.commands.executeCommand("quollValues.focus");
-  });
-
-  test("timeline view can be focused", async () => {
-    // Resolves only if quollTimeline + its webview provider are registered.
     await vscode.commands.executeCommand("quollTimeline.focus");
   });
 
@@ -175,10 +174,10 @@ suite("Quoll extension", () => {
     assert.ok(restored?.includes("6"), `resuming live should restore the run (got: ${restored})`);
   });
 
-  // Timeline (phase 11) rides on the same tape: clicking a row is the command
-  // asserted here, and it must park the Time Machine on that stop — which the
-  // hover then reads back. The row-building itself is unit-tested in
-  // src/render/aggregate_test.ts (no vscode needed).
+  // Timeline (phase 11) rides on the same tape. This jumps to a MIDDLE stop —
+  // stop 0 is the one index where a stop-index/log-index mix-up is invisible,
+  // because they coincide there — and reads the parked frame back through the
+  // hover. Row building itself is unit-tested in src/render/aggregate_test.ts.
   test("a timeline stop parks the Time Machine on that frame", async function () {
     if (!hasNativeCore()) return this.skip();
     const doc = await vscode.workspace.openTextDocument({
@@ -194,18 +193,25 @@ suite("Quoll extension", () => {
       return text?.includes("6") ? text : undefined;
     });
     assert.ok(live, "expected the map callback's captures before jumping");
+    assert.ok(live.includes("2") && live.includes("4"), `expected 2, 4 and 6: ${live}`);
 
-    // Stop 0 is the run's first recorded value, so the callback cannot have
-    // produced its last capture yet.
-    const landed = await vscode.commands.executeCommand<boolean>("quoll.goToStop", 0);
-    assert.strictEqual(landed, true, "goToStop should report that it landed");
-    const atFirstStop = await hoverAt(doc, inside);
-    assert.ok(
-      atFirstStop === undefined || !atFirstStop.includes("6"),
-      `the first stop should predate the last capture (got: ${atFirstStop})`,
-    );
+    // Walk stops from the front until the hovered site shows a history that is
+    // shorter than live but not empty — a frame strictly INSIDE the run, which
+    // only a correctly-resolved stop index can produce.
+    let partial: string | undefined;
+    for (let stop = 1; stop < 12 && partial === undefined; stop++) {
+      const landed = await vscode.commands.executeCommand<boolean>("quoll.goToStop", stop);
+      if (landed !== true) continue;
+      const text = await hoverAt(doc, inside);
+      if (text !== undefined && text.includes("2") && !text.includes("6")) partial = text;
+    }
+    assert.ok(partial, `no middle stop showed a partial history (live was: ${live})`);
 
-    // An index from no run at all is refused rather than throwing.
+    // A click carrying a generation from a run that no longer exists must be
+    // refused, not silently applied to whatever tape is current now.
+    const stale = await vscode.commands.executeCommand<boolean>("quoll.goToStop", 0, -99);
+    assert.strictEqual(stale, false, "a stale generation should be refused");
+
     await vscode.commands.executeCommand("quoll.stop");
     const afterStop = await vscode.commands.executeCommand<boolean>("quoll.goToStop", 0);
     assert.strictEqual(afterStop, false, "goToStop should refuse when no session is running");

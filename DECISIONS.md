@@ -83,8 +83,15 @@ entry states what the screenshot showed, so the reasoning stands without it.
     reach it as markup.
   - One command (`quoll.goToStop`) does both halves of a click, step and
     reveal, so the webview's click and a test's `executeCommand` take the same
-    path. It returns whether it landed, because a webview can hold an index
-    from a run that no longer exists.
+    path.
+  - **A click carries the run generation it came from.** The Timeline is a
+    separate surface that can still be showing a previous run's rows — every
+    edit starts a new run — and an index that is merely IN RANGE for the new
+    tape lands on an unrelated event. Range-checking alone only catches the
+    case where the new run happens to be shorter, which is the weaker half of
+    the problem. (Review caught this: the first draft checked the range, said
+    in this entry that it protected against stale indices, and returned a
+    boolean that the only caller discarded.)
 - **Rejected:**
   - *Function transitions and stack traces now* — they need a `function`
     capture kind in the Rust pass plus a runner-side stack. That is core work
@@ -104,10 +111,27 @@ entry states what the screenshot showed, so the reasoning stands without it.
   and stack traces (needs the core change above), and Interactive Value Graphs.
   `quoll-spec.md` records both as remaining.
 - **Covered by:** `timelineRows` unit tests in `src/render/aggregate_test.ts`
-  (dense stop indices, cover excluded, elapsed time from the run's first event,
-  an unattributable console line kept rather than dropped) and an integration
-  test in `src/test/extension.test.ts` that jumps to a stop through the real
-  command and reads the rewound state back through the hover.
+  (a row's position IS its stop index, asserted against `stepIndices`; cover
+  excluded; elapsed time measured from the tape's first RECORDED entry, with a
+  non-stop event first so the baseline is actually exercised; an unattributable
+  console line kept rather than dropped) and an integration test in
+  `src/test/extension.test.ts` that jumps to a MIDDLE stop through the real
+  command — stop 0 is the one index where a stop-index/log-index mix-up is
+  invisible — and refuses a stale generation.
+
+**Amended 2026-09-25 (review):** three defects in the first cut, all now fixed
+and covered. (1) `onDidUpdate` fired only on `value` events, so a `console` or
+late `error` arriving in its own stdout chunk was recorded, counted and
+decorated but never reached the Timeline — permanently, since nothing else
+would fire. The notification now lives in `record()`, the one place the tape
+grows, which is where it belonged. (2) The stale-index gap above. (3) `stepTo`
+accepted the newest frame that `stepBy` explicitly refuses; clicking the last
+row froze live painting for the rest of a streaming run. The newest stop is
+now treated as live by both. Also: rows are `<button>`s, so keyboard and
+screen-reader support come from the platform; rows update in place instead of
+rebuilding the list; and `src/runner/client.ts` now checks the message
+envelope at the boundary, since the user's own program shares that stdout and
+could otherwise put a shape onto the tape that a consumer dereferences.
 
 ---
 

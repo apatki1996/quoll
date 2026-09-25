@@ -246,19 +246,18 @@ export function stepIndices(log: readonly RunnerEvent[]): number[] {
   return stops;
 }
 
-/** One Timeline row: a Time Machine stop, ready to render (phase 11). */
+/**
+ * One Timeline row: a Time Machine stop, ready to render (phase 11). A row's
+ * POSITION in the returned array is its stop index — the thing `stepTo` takes
+ * — so it isn't repeated as a field that could disagree with it.
+ */
 export interface TimelineRow {
-  /** Stop index — what `QuollSession.stepTo` takes. Dense, so it doubles as
-   * the row's position in this array. */
-  index: number;
   line: number;
   /** The event kind, which the Timeline colours by. */
   kind: string;
   preview: string;
-  /** Since the run's first recorded event. */
+  /** Since the run's first RECORDED event (the tape's, not the run's). */
   elapsedMs: number;
-  /** Is the Time Machine parked on this row? */
-  current: boolean;
 }
 
 /** One line of text for a recorded event — what a Timeline row shows. */
@@ -283,24 +282,20 @@ function rowPreview(msg: RunnerEvent): string {
  * Time Machine are one mechanism with two front ends, not two recordings.
  *
  * `lineOf` is the caller's attribution map (the same two the Aggregator gets:
- * site ids for `value`/`perf`, generated lines for `console`/`error`), and
- * `current` is the stop the Time Machine is parked on, if any.
+ * site ids for `value`/`perf`, generated lines for `console`/`error`).
  */
 export function timelineRows(
   log: readonly (RunnerEvent & { ts: number })[],
   lineOf: (event: RunnerEvent) => number | undefined,
-  current?: number,
 ): TimelineRow[] {
   const first = log[0]?.ts;
-  return stepIndices(log).map((at, index) => {
+  return stepIndices(log).map((at) => {
     const event = log[at]!;
     return {
-      index,
       line: lineOf(event) ?? 0,
       kind: event.t,
       preview: rowPreview(event),
       elapsedMs: first === undefined ? 0 : event.ts - first,
-      current: current === index,
     };
   });
 }

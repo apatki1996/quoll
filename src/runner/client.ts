@@ -130,7 +130,16 @@ export function startRun(opts: StartRunOpts): RunHandle {
       buf = buf.slice(nl + 1);
       if (!line.trim()) continue;
       try {
-        opts.onMessage(JSON.parse(line) as RunnerMsg);
+        const parsed: unknown = JSON.parse(line);
+        // The user's own code shares this stdout, so a scratchpad can write a
+        // line that parses as JSON but isn't a runner message. Check the shape
+        // ONCE, here at the boundary, rather than defensively in every
+        // consumer (aggregator, timeline, explorer) downstream.
+        if (!isRunnerMsg(parsed)) {
+          opts.onDiagnostic(`ignored non-protocol line on runner stdout: ${line}`);
+          continue;
+        }
+        opts.onMessage(parsed);
       } catch {
         opts.onDiagnostic(`unparseable runner message: ${line}`);
       }
@@ -155,4 +164,16 @@ export function startRun(opts: StartRunOpts): RunHandle {
     },
     exited,
   };
+}
+
+/**
+ * Does this parsed line have the envelope every runner message carries? The
+ * per-variant payload isn't checked — the runner is ours and the protocol is
+ * frozen — but the envelope is what separates our messages from whatever the
+ * user's program printed, and every consumer reads `t`, `runId` and `seq`.
+ */
+function isRunnerMsg(value: unknown): value is RunnerMsg {
+  if (typeof value !== "object" || value === null) return false;
+  const msg = value as Partial<RunnerMsg>;
+  return typeof msg.t === "string" && typeof msg.runId === "number" && typeof msg.seq === "number";
 }

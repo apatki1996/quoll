@@ -186,19 +186,16 @@ Deno.test("replay un-settles a promise that settled later", () => {
 
 Deno.test("timeline rows are the stops, in order, with elapsed time", () => {
   const log = [
-    { t: "value", siteId: 1, value: { type: "number", preview: "1" }, ts: 1000 },
-    { t: "cover", siteId: 2, hits: 1, ts: 1001 },
+    // A non-stop event FIRST, so the elapsed baseline is the tape's first
+    // entry rather than its first stop — the two differ only in this shape.
+    { t: "cover", siteId: 2, hits: 1, ts: 1000 },
+    { t: "value", siteId: 1, value: { type: "number", preview: "1" }, ts: 1002 },
     { t: "console", level: "log", args: [{ type: "string", preview: "hi" }], siteId: 7, ts: 1005 },
     { t: "perf", siteId: 1, durationMs: 0.5, ts: 1020 },
     { t: "error", message: "boom", siteId: 7, ts: 1030 },
   ] as never[];
-  const rows = timelineRows(log, (event) => ((event as { siteId?: number }).siteId ?? 0) * 10, 2);
+  const rows = timelineRows(log, (event) => ((event as { siteId?: number }).siteId ?? 0) * 10);
 
-  // Dense indices: the webview treats a row's position as its stop id.
-  assert.deepEqual(
-    rows.map((r) => r.index),
-    [0, 1, 2, 3],
-  );
   assert.deepEqual(
     rows.map((r) => r.kind),
     ["value", "console", "perf", "error"], // cover is not a stop
@@ -209,13 +206,31 @@ Deno.test("timeline rows are the stops, in order, with elapsed time", () => {
   );
   assert.deepEqual(
     rows.map((r) => r.elapsedMs),
-    [0, 5, 20, 30], // from the run's FIRST event, recorded or not
+    [2, 5, 20, 30], // from the tape's first RECORDED entry (the cover at 1000)
   );
   assert.deepEqual(
-    rows.map((r) => r.current),
-    [false, false, true, false],
+    rows.map((r) => r.line),
+    [10, 70, 10, 70],
   );
-  assert.deepEqual(rows[0]!.line, 10);
+});
+
+Deno.test("a row's position is its stop index", () => {
+  // The contract the webview relies on: rows[i] describes stepIndices(log)[i].
+  // Nothing else ties a click back to a frame, so it is asserted directly.
+  const log = [
+    { t: "cover", siteId: 9, hits: 1, ts: 0 },
+    { t: "value", siteId: 1, value: { type: "number", preview: "a" }, ts: 1 },
+    { t: "cover", siteId: 9, hits: 2, ts: 2 },
+    { t: "value", siteId: 2, value: { type: "number", preview: "b" }, ts: 3 },
+  ] as never[];
+  const rows = timelineRows(log, () => 1);
+  const stops = stepIndices(log);
+  assert.equal(rows.length, stops.length);
+  rows.forEach((row, i) => {
+    assert.equal(row.preview, (log[stops[i]!] as { value: { preview: string } }).value.preview);
+  });
+  // Row 1 is log index 3: a consumer that confused the two would read a cover.
+  assert.equal(stops[1], 3);
 });
 
 Deno.test("timeline rows tolerate an unattributable event", () => {
@@ -226,6 +241,6 @@ Deno.test("timeline rows tolerate an unattributable event", () => {
   // rather than dropping the row, so the timeline stays a complete record.
   assert.deepEqual(
     timelineRows(log, () => undefined),
-    [{ index: 0, line: 0, kind: "console", preview: "x", elapsedMs: 0, current: false }],
+    [{ line: 0, kind: "console", preview: "x", elapsedMs: 0 }],
   );
 });

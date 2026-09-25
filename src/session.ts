@@ -17,8 +17,6 @@ import { Renderer } from "./render/decorations.ts";
 import { startRun, type RunHandle } from "./runner/client.ts";
 import { stageRunner } from "./runner/stage.ts";
 
-export type { TimelineRow };
-
 /** Host-side outcome of a lazy expansion ("gone": runner process is dead). */
 export type ExpandOutcome =
   | { entries: { key: string; value: RemoteValue }[] }
@@ -88,7 +86,8 @@ export class QuollSession implements vscode.Disposable {
   private lineOf: ((event: RunnerEvent) => number | undefined) | undefined;
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   private readonly updateEmitter = new vscode.EventEmitter<void>();
-  /** Fires (microtask-coalesced) when explorer-visible data changes. */
+  /** Fires (microtask-coalesced) when anything the Values tree or the Timeline
+   * reads has changed — a recorded stop, a new run, or a Time Machine step. */
   readonly onDidUpdate = this.updateEmitter.event;
   private readonly renderer: Renderer;
   private debounce: ReturnType<typeof setTimeout> | undefined;
@@ -267,8 +266,7 @@ export class QuollSession implements vscode.Disposable {
     this.agg?.ingest(msg); // fold value/console/cover/error into render state
     switch (msg.t) {
       case "value":
-        this.scheduleRender();
-        this.queueUpdate(); // explorer roots changed
+        this.scheduleRender(); // (record() already notified the tape's readers)
         break;
       case "cover":
         this.scheduleRender();
@@ -320,10 +318,17 @@ export class QuollSession implements vscode.Disposable {
           return;
         }
         this.log.push(msg);
+        if (!isStop(msg)) return; // cover: nothing a consumer of the tape shows
+        // Every recorded stop changes the tape, and the tape is what the
+        // Timeline renders — so the notification belongs HERE, at the one
+        // place the tape grows, not on the `value` branch of onMessage. A
+        // `console` or late `error` arriving in its own chunk used to be
+        // recorded, counted and decorated, but never reach the Timeline.
+        this.queueUpdate();
         // A run can still be streaming (timers, late promises) while the user
         // stands in the Time Machine, and live painting is frozen there — so
         // the counter growing under them is the only sign the run isn't over.
-        if (this.step !== undefined && isStop(msg)) {
+        if (this.step !== undefined) {
           this.showStep(this.step + 1, stepIndices(this.log).length);
         }
     }
@@ -349,10 +354,19 @@ export class QuollSession implements vscode.Disposable {
     this.renderStop(target, stops);
   }
 
-  /** Jump straight to one stop — the Timeline's click (phase 11). */
+  /**
+   * Jump straight to one stop — the Timeline's click (phase 11). The newest
+   * stop IS live, so landing there resumes live rather than entering a frozen
+   * frame that looks identical to it; `stepBy` refuses the same frame for the
+   * same reason, and the two must not disagree about it.
+   */
   stepTo(target: number): void {
     const stops = stepIndices(this.log);
     if (target < 0 || target >= stops.length) return;
+    if (target === stops.length - 1) {
+      this.goLive();
+      return;
+    }
     this.renderStop(target, stops);
   }
 
@@ -377,10 +391,24 @@ export class QuollSession implements vscode.Disposable {
     this.queueUpdate(); // explorer, hover and timeline follow the step
   }
 
-  /** The run as Timeline rows, with the stepped frame marked (phase 11). */
+  /** The run as Timeline rows (phase 11); the array index is the stop index. */
   timelineRows(): TimelineRow[] {
-    const lineOf = this.lineOf;
-    return lineOf ? timelineRows(this.log, lineOf, this.step) : [];
+    return timelineRows(this.log, this.lineOf ?? (() => undefined));
+  }
+
+  /**
+   * Which run these rows describe. The Timeline is a separate surface that can
+   * hold rows from a run that has already been replaced — every edit starts a
+   * new one — so a click carries this back and is refused if it no longer
+   * matches. Without it an index lands on an unrelated event of a newer run.
+   */
+  get runGeneration(): number {
+    return this.runId;
+  }
+
+  /** The stop the Time Machine is parked on, if any (phase 11 highlight). */
+  get currentStop(): number | undefined {
+    return this.step;
   }
 
   /** Leave the Time Machine: repaint from the live fold and resume painting. */

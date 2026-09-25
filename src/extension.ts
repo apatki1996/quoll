@@ -44,9 +44,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(Commands.stepForward, () => session?.stepBy(1)),
     vscode.commands.registerCommand(Commands.live, () => session?.goLive()),
     // A Timeline click: park the Time Machine on that stop and scroll to the
-    // line it happened on. Returns whether it landed, so a test (or a stale
-    // webview holding an index from a previous run) can tell.
-    vscode.commands.registerCommand(Commands.goToStop, (index: number) => goToStop(index)),
+    // line it happened on. Returns whether it landed.
+    vscode.commands.registerCommand(Commands.goToStop, (index: number, generation?: number) =>
+      goToStop(index, generation),
+    ),
   );
   output.appendLine("[quoll] activated");
 }
@@ -100,10 +101,19 @@ function stopSession(): void {
   timeline.setSession(undefined);
 }
 
-/** Park the Time Machine on a Timeline stop and reveal the line it happened on. */
-function goToStop(index: number): boolean {
+/**
+ * Park the Time Machine on a Timeline stop and reveal the line it happened on.
+ *
+ * `generation` is the run the caller's index belongs to. The Timeline is a
+ * separate surface that can still be showing a previous run's rows — every
+ * edit starts a new run — and an index that is merely IN RANGE for the new
+ * tape would otherwise land on an unrelated event. Checking the index alone
+ * only catches the case where the new run happens to be shorter.
+ */
+function goToStop(index: number, generation?: number): boolean {
+  if (generation !== undefined && generation !== session?.runGeneration) return false;
   const row = session?.timelineRows()[index];
-  if (!row) return false; // no session, or an index from a run that's gone
+  if (!row) return false; // no session, or an index past this run's stops
   session!.stepTo(index);
   const editor = vscode.window.visibleTextEditors.find((e) => e.document === session!.doc);
   if (editor && row.line >= 1 && row.line <= editor.document.lineCount) {
