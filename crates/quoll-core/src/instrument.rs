@@ -11,6 +11,20 @@
 //! - branch sites:              ternary arms and logical-expression RHS →
 //!   `(__quoll.cover(id), arm)`.
 //!
+//! - function sites (phase 11): every function body becomes
+//!   `const __quoll_f = __quoll.enter(id); try { body }
+//!    catch (__quoll_e) { __quoll.unwind(__quoll_f, __quoll_e); throw __quoll_e; }
+//!    finally { __quoll.leave(__quoll_f); }`
+//!   so the runner can keep a shadow call stack. Inside async functions and
+//!   generators, each `await`/`yield` additionally becomes
+//!   `__quoll.resume(__quoll_f, await __quoll.suspend(__quoll_f, arg))`: a
+//!   suspended frame is OFF the stack until it resumes, or the code that runs
+//!   meanwhile would be reported as running inside it. Paths that re-enter a
+//!   suspended frame without passing through `resume` — a rejected `await`
+//!   landing in a `catch`/`finally`, the implicit awaits of `for await` — get
+//!   an idempotent `__quoll.reenter(__quoll_f)`; `for await` also suspends
+//!   explicitly, since its awaits appear nowhere in the source.
+//!
 //! Value sites carry an opt-in KIND (`expr` by default; `comment`/`perf` from
 //! `//?`/`//?.`; `selection`/`logpoint` from caller-supplied `extra_sites`).
 //! The kind changes only the host's quiet-mode filter, never the capture —
@@ -20,7 +34,7 @@
 //! wraps/precedes. Empty (0,0) spans would emit source-map segments pointing
 //! at line 1 and corrupt line attribution for anything sharing the line.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use oxc_allocator::{Allocator, Vec as ArenaVec};
 use oxc_ast::ast::*;
@@ -28,6 +42,16 @@ use oxc_ast::builder::AstBuilder;
 use oxc_ast_visit::VisitMut;
 use oxc_ast_visit::walk_mut;
 use oxc_span::{GetSpan, Span};
+use oxc_syntax::scope::ScopeFlags;
+
+/// The per-call frame token the runner hands back from `enter`. One `const`
+/// per function body, so nested functions shadow it and an `await` always
+/// names the frame of the function it suspends — lexical scope does the work.
+const FRAME: &str = "__quoll_f";
+/// The catch parameter of the synthesized function-level `try`.
+const THROWN: &str = "__quoll_e";
+/// A function neither declared with a name nor put somewhere that names it.
+const ANONYMOUS: &str = "(anonymous)";
 
 /// Everything the pass needs to tag a value site beyond the AST itself: the
 /// `//?`/`//?.` annotations read from the source comments, plus the caller's
@@ -65,6 +89,8 @@ pub struct SiteRec {
     pub end_line: u32,
     pub end_column: u32,
     pub kind: &'static str,
+    /// `function` sites only: the name a stack frame shows.
+    pub name: Option<String>,
 }
 
 pub struct Instrumenter<'a> {
@@ -79,6 +105,18 @@ pub struct Instrumenter<'a> {
     logpoint_lines: HashSet<u32>,
     /// Caller-supplied selection anchors, offset-resolved (Phase 8).
     selections: Vec<Selection>,
+    /// Names for anonymous functions and classes, inferred from where they
+    /// were put (`const f = () => …`, `{ f() {} }`), keyed by the function or
+    /// class node's span START. Recorded by the PARENT's visitor and looked up
+    /// by the node's own, so there is no "pending name" state that an
+    /// unrelated function visited in between could steal.
+    names: HashMap<u32, String>,
+    /// Names of the enclosing classes, innermost last (`C.method`).
+    classes: Vec<Option<String>>,
+    /// One entry per enclosing function, innermost last: can it SUSPEND
+    /// (async or generator)? Empty = module top level, where an `await` has no
+    /// frame to suspend.
+    frames: Vec<bool>,
 }
 
 impl<'a> Instrumenter<'a> {
@@ -118,6 +156,9 @@ impl<'a> Instrumenter<'a> {
             comment_lines: annotations.comment_lines,
             logpoint_lines: annotations.logpoint_lines,
             selections,
+            names: HashMap::new(),
+            classes: Vec::new(),
+            frames: Vec::new(),
         }
     }
 
@@ -140,7 +181,14 @@ impl<'a> Instrumenter<'a> {
             end_line,
             end_column,
             kind,
+            name: None,
         });
+        id
+    }
+
+    fn new_function_site(&mut self, span: Span, name: String) -> u32 {
+        let id = self.new_site(span, "function");
+        self.sites[id as usize].name = Some(name);
         id
     }
 
@@ -158,22 +206,187 @@ impl<'a> Instrumenter<'a> {
         arg: Option<Expression<'a>>,
         span: Span,
     ) -> Expression<'a> {
-        let object = Expression::new_identifier(span, "__quoll", &self.ast);
-        let property = IdentifierName::new(span, method, &self.ast);
-        let callee =
-            Expression::new_static_member_expression(span, object, property, false, &self.ast);
-        let mut args = ArenaVec::with_capacity_in(2, &self.ast);
-        args.push(Argument::from(Expression::new_numeric_literal(
+        let id = Expression::new_numeric_literal(
             span,
             f64::from(id),
             None,
             NumberBase::Decimal,
             &self.ast,
-        )));
+        );
+        self.runtime_call(method, id, arg, span)
+    }
+
+    /// `__quoll.<method>(__quoll_f[, <arg>])` — the frame-token calls.
+    fn frame_call(
+        &self,
+        method: &'static str,
+        arg: Option<Expression<'a>>,
+        span: Span,
+    ) -> Expression<'a> {
+        let frame = Expression::new_identifier(span, FRAME, &self.ast);
+        self.runtime_call(method, frame, arg, span)
+    }
+
+    fn runtime_call(
+        &self,
+        method: &'static str,
+        first: Expression<'a>,
+        arg: Option<Expression<'a>>,
+        span: Span,
+    ) -> Expression<'a> {
+        let object = Expression::new_identifier(span, "__quoll", &self.ast);
+        let property = IdentifierName::new(span, method, &self.ast);
+        let callee =
+            Expression::new_static_member_expression(span, object, property, false, &self.ast);
+        let mut args = ArenaVec::with_capacity_in(2, &self.ast);
+        args.push(Argument::from(first));
         if let Some(a) = arg {
             args.push(Argument::from(a));
         }
         Expression::new_call_expression(span, callee, None, args, false, &self.ast)
+    }
+
+    fn frame_statement(&self, method: &'static str, span: Span) -> Statement<'a> {
+        Statement::new_expression_statement(span, self.frame_call(method, None, span), &self.ast)
+    }
+
+    /// Inside an async function or generator — where an `await`/`yield` can
+    /// take the current frame off the stack?
+    fn can_suspend(&self) -> bool {
+        self.frames.last().copied().unwrap_or(false)
+    }
+
+    /// Record the name a function or class takes from where it was put, if
+    /// `expr` IS one (parentheses aside). Anything else — `wrap(() => 1)` —
+    /// records nothing: the name belongs to the call's result, not to the
+    /// function passed into it.
+    fn name_expression(&mut self, expr: &Expression<'a>, name: &str) {
+        let start = match expr.without_parentheses() {
+            Expression::FunctionExpression(f) => f.span.start,
+            Expression::ArrowFunctionExpression(a) => a.span.start,
+            Expression::ClassExpression(c) => c.span.start,
+            _ => return,
+        };
+        self.names.entry(start).or_insert_with(|| name.to_string());
+    }
+
+    /// `Class.member` inside a named class, else just `member`.
+    fn member_name(&self, key: &PropertyKey<'a>) -> Option<String> {
+        let key = key.static_name()?;
+        Some(match self.classes.last() {
+            Some(Some(class)) => format!("{class}.{key}"),
+            _ => key.into_owned(),
+        })
+    }
+
+    /// Wrap a function body's statements in a frame:
+    ///
+    /// ```js
+    /// const __quoll_f = __quoll.enter(id);
+    /// try { ...body }
+    /// catch (__quoll_e) { __quoll.unwind(__quoll_f, __quoll_e); throw __quoll_e; }
+    /// finally { __quoll.leave(__quoll_f); }
+    /// ```
+    ///
+    /// The `finally` is what makes `leave` exact: every way out of a body —
+    /// return, throw, a generator's `.return()` — passes through it. The
+    /// `catch` rethrows the SAME value, so it is invisible to the program; it
+    /// exists so the runner can snapshot the stack at the throw, before the
+    /// `finally`s below it unwind the frames away. Function declarations
+    /// nested in the body move into the `try` block with everything else,
+    /// which in strict code (modules always are) hoists them to the top of
+    /// that block — still above every statement that could call them.
+    fn framed(
+        &self,
+        id: u32,
+        span: Span,
+        body: ArenaVec<'a, Statement<'a>>,
+    ) -> ArenaVec<'a, Statement<'a>> {
+        let enter = self.quoll_call("enter", id, None, span);
+        let declarator = VariableDeclarator::new(
+            span,
+            BindingPattern::new_binding_identifier(span, FRAME, &self.ast),
+            None,
+            Some(enter),
+            false,
+            &self.ast,
+        );
+        let mut declarators = ArenaVec::with_capacity_in(1, &self.ast);
+        declarators.push(declarator);
+        let declaration = Statement::new_variable_declaration(
+            span,
+            VariableDeclarationKind::Const,
+            declarators,
+            false,
+            &self.ast,
+        );
+
+        let thrown = || Expression::new_identifier(span, THROWN, &self.ast);
+        let mut on_throw = ArenaVec::with_capacity_in(2, &self.ast);
+        on_throw.push(Statement::new_expression_statement(
+            span,
+            self.frame_call("unwind", Some(thrown()), span),
+            &self.ast,
+        ));
+        on_throw.push(Statement::new_throw_statement(span, thrown(), &self.ast));
+        let param = CatchParameter::new(
+            span,
+            BindingPattern::new_binding_identifier(span, THROWN, &self.ast),
+            None,
+            &self.ast,
+        );
+        let handler = CatchClause::boxed(
+            span,
+            Some(param),
+            BlockStatement::boxed(span, on_throw, &self.ast),
+            &self.ast,
+        );
+        let mut on_exit = ArenaVec::with_capacity_in(1, &self.ast);
+        on_exit.push(self.frame_statement("leave", span));
+        let attempt = Statement::new_try_statement(
+            span,
+            BlockStatement::boxed(span, body, &self.ast),
+            Some(handler),
+            Some(BlockStatement::boxed(span, on_exit, &self.ast)),
+            &self.ast,
+        );
+
+        let mut out = ArenaVec::with_capacity_in(2, &self.ast);
+        out.push(declaration);
+        out.push(attempt);
+        out
+    }
+
+    /// `await arg` → `__quoll.resume(__quoll_f, await __quoll.suspend(__quoll_f, arg))`,
+    /// and the same for `yield`/`yield*`. `arg` is evaluated INSIDE the frame
+    /// (it is the call's first argument), then the frame leaves the stack for
+    /// as long as the function is suspended, and `resume` puts it back — on top
+    /// of whatever stack the resumption happens on (empty for a microtask, the
+    /// caller's for a generator's `.next()`). The awaited value passes through
+    /// both calls untouched, so the program sees no extra tick and no wrapper.
+    /// A rejected `await` never reaches `resume`; see `reenter_at`.
+    fn wrap_suspension(&mut self, expr: &mut Expression<'a>) {
+        let span = expr.span();
+        let mut suspended = self.take_expression(expr);
+        match &mut suspended {
+            Expression::AwaitExpression(await_expr) => {
+                let arg = self.take_expression(&mut await_expr.argument);
+                await_expr.argument = self.frame_call("suspend", Some(arg), span);
+            }
+            Expression::YieldExpression(yield_expr) => {
+                let arg = yield_expr.argument.take();
+                yield_expr.argument = Some(self.frame_call("suspend", arg, span));
+            }
+            _ => unreachable!("wrap_suspension is only called on await/yield"),
+        }
+        *expr = self.frame_call("resume", Some(suspended), span);
+    }
+
+    /// Prepend an idempotent `__quoll.reenter(__quoll_f)` to a block that can
+    /// run in a suspended frame without passing through `resume`.
+    fn reenter_at(&self, block: &mut BlockStatement<'a>) {
+        let span = block.span;
+        block.body.insert(0, self.frame_statement("reenter", span));
     }
 
     /// Does `span` sit on a line in `lines`? A trailing annotation follows the
@@ -319,6 +532,15 @@ impl<'a> Instrumenter<'a> {
     }
 }
 
+/// A `for await` loop, labelled or not.
+fn is_for_await(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::ForOfStatement(for_of) => for_of.r#await,
+        Statement::LabeledStatement(labeled) => is_for_await(&labeled.body),
+        _ => false,
+    }
+}
+
 fn is_console_call(expr: &Expression) -> bool {
     let Expression::CallExpression(call) = expr else {
         return false;
@@ -342,12 +564,144 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
             if !matches!(stmt, Statement::ImportDeclaration(_)) {
                 rebuilt.push(self.cover_statement(stmt.span()));
             }
+            // A `for await` suspends on its last `next()` too, and nothing
+            // after the loop passes through `resume` — so the statement after
+            // it re-enters. (Its body is handled in visit_for_of_statement.)
+            let after = self.can_suspend() && is_for_await(&stmt);
+            let span = stmt.span();
             rebuilt.push(stmt);
+            if after {
+                rebuilt.push(self.frame_statement("reenter", span));
+            }
         }
         *stmts = rebuilt;
     }
 
+    fn visit_expression(&mut self, expr: &mut Expression<'a>) {
+        walk_mut::walk_expression(self, expr);
+        // Top-level `await` has no frame: the module body is not a function.
+        if !self.frames.is_empty()
+            && matches!(
+                expr,
+                Expression::AwaitExpression(_) | Expression::YieldExpression(_)
+            )
+        {
+            self.wrap_suspension(expr);
+        }
+    }
+
+    fn visit_function(&mut self, func: &mut Function<'a>, flags: ScopeFlags) {
+        if func.body.is_none() {
+            // An overload or `declare` — the transform strips these, but a
+            // body-less function has no frame to keep either way.
+            walk_mut::walk_function(self, func, flags);
+            return;
+        }
+        let name = func
+            .id
+            .as_ref()
+            .map(|id| id.name.to_string())
+            .or_else(|| self.names.remove(&func.span.start))
+            .unwrap_or_else(|| ANONYMOUS.to_string());
+        self.frames.push(func.r#async || func.generator);
+        walk_mut::walk_function(self, func, flags);
+        self.frames.pop();
+        let id = self.new_function_site(func.span, name);
+        if let Some(body) = &mut func.body {
+            let stmts = std::mem::replace(&mut body.statements, ArenaVec::new_in(&self.ast));
+            body.statements = self.framed(id, body.span, stmts);
+        }
+    }
+
+    fn visit_class(&mut self, class: &mut Class<'a>) {
+        let name = class
+            .id
+            .as_ref()
+            .map(|id| id.name.to_string())
+            .or_else(|| self.names.remove(&class.span.start));
+        self.classes.push(name);
+        walk_mut::walk_class(self, class);
+        self.classes.pop();
+    }
+
+    fn visit_method_definition(&mut self, method: &mut MethodDefinition<'a>) {
+        let name = if method.kind == MethodDefinitionKind::Constructor {
+            // What V8 prints for a constructor frame.
+            match self.classes.last() {
+                Some(Some(class)) => Some(format!("new {class}")),
+                _ => None,
+            }
+        } else if method.computed {
+            None
+        } else {
+            self.member_name(&method.key)
+        };
+        if let Some(name) = name {
+            self.names.entry(method.value.span.start).or_insert(name);
+        }
+        walk_mut::walk_method_definition(self, method);
+    }
+
+    fn visit_property_definition(&mut self, prop: &mut PropertyDefinition<'a>) {
+        if !prop.computed
+            && let Some(name) = self.member_name(&prop.key)
+            && let Some(value) = &prop.value
+        {
+            self.name_expression(value, &name);
+        }
+        walk_mut::walk_property_definition(self, prop);
+    }
+
+    fn visit_object_property(&mut self, prop: &mut ObjectProperty<'a>) {
+        if !prop.computed
+            && let Some(name) = prop.key.static_name()
+        {
+            let name = name.into_owned();
+            self.name_expression(&prop.value, &name);
+        }
+        walk_mut::walk_object_property(self, prop);
+    }
+
+    fn visit_assignment_expression(&mut self, assign: &mut AssignmentExpression<'a>) {
+        let name = match &assign.left {
+            AssignmentTarget::AssignmentTargetIdentifier(ident) => Some(ident.name.to_string()),
+            AssignmentTarget::StaticMemberExpression(member) => {
+                Some(member.property.name.to_string())
+            }
+            _ => None,
+        };
+        if let Some(name) = name {
+            self.name_expression(&assign.right, &name);
+        }
+        walk_mut::walk_assignment_expression(self, assign);
+    }
+
+    fn visit_catch_clause(&mut self, clause: &mut CatchClause<'a>) {
+        walk_mut::walk_catch_clause(self, clause);
+        // A rejected `await` throws here without passing through `resume`.
+        if self.can_suspend() {
+            self.reenter_at(&mut clause.body);
+        }
+    }
+
+    fn visit_try_statement(&mut self, try_stmt: &mut TryStatement<'a>) {
+        walk_mut::walk_try_statement(self, try_stmt);
+        // …and so does the `finally` a rejected `await` (or a generator's
+        // `.return()`) runs on the way out.
+        if self.can_suspend()
+            && let Some(finalizer) = &mut try_stmt.finalizer
+        {
+            self.reenter_at(finalizer);
+        }
+    }
+
     fn visit_variable_declarator(&mut self, declarator: &mut VariableDeclarator<'a>) {
+        if let (BindingPattern::BindingIdentifier(ident), Some(init)) =
+            (&declarator.id, &declarator.init)
+        {
+            let name = ident.name.to_string();
+            self.name_expression(init, &name);
+        }
         walk_mut::walk_variable_declarator(self, declarator);
         if let Some(init) = &mut declarator.init {
             // Function/class inits would just preview the function object —
@@ -390,6 +744,32 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
     fn visit_for_of_statement(&mut self, for_of: &mut ForOfStatement<'a>) {
         self.ensure_block(&mut for_of.body);
         walk_mut::walk_for_of_statement(self, for_of);
+        if !for_of.r#await || !self.can_suspend() {
+            return;
+        }
+        // A `for await` awaits `next()` before EVERY iteration, the first one
+        // included, and nothing in the source marks those awaits. So the
+        // frame suspends once the iterable is handed over, and again at the
+        // end of each iteration (a `finally`, so `continue` suspends too);
+        // it re-enters at the top of the body, and after the loop.
+        let right_span = for_of.right.span();
+        let right = self.take_expression(&mut for_of.right);
+        for_of.right = self.frame_call("suspend", Some(right), right_span);
+        if let Statement::BlockStatement(body) = &mut for_of.body {
+            let span = body.span;
+            let stmts = std::mem::replace(&mut body.body, ArenaVec::new_in(&self.ast));
+            let mut on_exit = ArenaVec::with_capacity_in(1, &self.ast);
+            on_exit.push(self.frame_statement("suspend", span));
+            let iteration = Statement::new_try_statement(
+                span,
+                BlockStatement::boxed(span, stmts, &self.ast),
+                None,
+                Some(BlockStatement::boxed(span, on_exit, &self.ast)),
+                &self.ast,
+            );
+            body.body.push(self.frame_statement("reenter", span));
+            body.body.push(iteration);
+        }
     }
 
     fn visit_while_statement(&mut self, while_stmt: &mut WhileStatement<'a>) {
@@ -417,19 +797,60 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
     }
 
     fn visit_arrow_function_expression(&mut self, arrow: &mut ArrowFunctionExpression<'a>) {
-        if !arrow.body.is_expression() {
+        let name = self
+            .names
+            .remove(&arrow.span.start)
+            .unwrap_or_else(|| ANONYMOUS.to_string());
+        self.frames.push(arrow.r#async);
+        if arrow.body.is_expression() {
+            // Expression-bodied arrow: the body expression IS the implicit
+            // return. No statement site here (a cover statement would have
+            // nowhere to go), only the value wrap, which returns the value.
+            self.visit_formal_parameters(&mut arrow.params);
+            if let Some(body) = arrow.body.as_expression_mut() {
+                self.visit_expression(body);
+                if !is_console_call(body) {
+                    self.wrap_value(body);
+                }
+            }
+        } else {
             walk_mut::walk_arrow_function_expression(self, arrow);
-            return;
         }
-        // Expression-bodied arrow: the body expression IS the implicit return.
-        // Inserting a cover statement would force a block body and silently
-        // destroy the return value — so no statement site here, only the value
-        // wrap (which returns the value).
-        self.visit_formal_parameters(&mut arrow.params);
-        if let Some(body) = arrow.body.as_expression_mut() {
-            self.visit_expression(body);
-            if !is_console_call(body) {
-                self.wrap_value(body);
+        self.frames.pop();
+
+        let id = self.new_function_site(arrow.span, name);
+        // The frame needs statements around the body, so an expression body
+        // becomes `{ return <expr>; }` first — the same value, returned
+        // explicitly.
+        let body_span = arrow.body.span();
+        let stmts = match &mut arrow.body {
+            ArrowFunctionBody::FunctionBody(body) => {
+                std::mem::replace(&mut body.statements, ArenaVec::new_in(&self.ast))
+            }
+            other => {
+                let expr = other
+                    .as_expression_mut()
+                    .map(|e| self.take_expression(e))
+                    .expect("a non-block arrow body is an expression");
+                let mut stmts = ArenaVec::with_capacity_in(1, &self.ast);
+                stmts.push(Statement::new_return_statement(
+                    body_span,
+                    Some(expr),
+                    &self.ast,
+                ));
+                stmts
+            }
+        };
+        let framed = self.framed(id, body_span, stmts);
+        match &mut arrow.body {
+            ArrowFunctionBody::FunctionBody(body) => body.statements = framed,
+            other => {
+                *other = ArrowFunctionBody::FunctionBody(FunctionBody::boxed(
+                    body_span,
+                    ArenaVec::new_in(&self.ast),
+                    framed,
+                    &self.ast,
+                ));
             }
         }
     }

@@ -6,6 +6,9 @@
 //                              (catches noise/surplus a substring check misses)
 //   //~ covered|uncovered|partial   line's coverage gutter state
 //   //! <text>                 line must show an error containing <text>
+//   //^ <a> < <b> < …          the call stack of the line's LAST stop (value,
+//                              console, perf or error), innermost first, as
+//                              the Timeline's stack trace names it (phase 11)
 //   //@values all|comments     file-level: render mode for the Aggregator
 //   //@select <line>:<col>     file-level: a value-on-selection anchor, in the
 //                              0-based UTF-16 columns VS Code reports
@@ -19,7 +22,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Aggregator } from "../src/render/aggregate.ts";
+import { Aggregator, isStop, stackTrace } from "../src/render/aggregate.ts";
 import { prepareRun } from "../src/instrument/index.ts";
 import { startRun } from "../src/runner/client.ts";
 import { stageRunner } from "../src/runner/stage.ts";
@@ -34,10 +37,11 @@ const deno = process.env.DENO ?? "deno";
 
 // `==` (exact) is checked before `=>` (contains); the patterns are disjoint
 // (`=>` vs `==`) so a line carries at most one of them.
-const EXACT_RE = /\/\/==\s*(.*?)(?=\s*\/\/[~!]|$)/;
-const VALUE_RE = /\/\/=>\s*(.*?)(?=\s*\/\/[~!]|$)/;
+const EXACT_RE = /\/\/==\s*(.*?)(?=\s*\/\/[~!^]|$)/;
+const VALUE_RE = /\/\/=>\s*(.*?)(?=\s*\/\/[~!^]|$)/;
 const COV_RE = /\/\/~\s*(covered|uncovered|partial)/;
-const ERR_RE = /\/\/!\s*(.*?)(?=\s*\/\/[~=]|$)/;
+const ERR_RE = /\/\/!\s*(.*?)(?=\s*\/\/[~=^]|$)/;
+const STACK_RE = /\/\/\^\s*(.*?)(?=\s*\/\/[~=!]|$)/;
 
 // Phase 8/9 `extraSites`: the harness stands in for the editor state the live
 // host reads (a selection, a breakpoint) so the anchoring rules — innermost
@@ -60,7 +64,13 @@ function parseExtraSites(source) {
 }
 
 function parseExpectations(source) {
-  const expect = { values: new Map(), exact: new Map(), coverage: new Map(), errors: new Map() };
+  const expect = {
+    values: new Map(),
+    exact: new Map(),
+    coverage: new Map(),
+    errors: new Map(),
+    stacks: new Map(),
+  };
   source.split("\n").forEach((text, i) => {
     const line = i + 1;
     // Annotations only ever trail code; a pure-comment line is prose, so don't
@@ -75,6 +85,8 @@ function parseExpectations(source) {
     if (c) expect.coverage.set(line, c[1]);
     const e = text.match(ERR_RE);
     if (e) expect.errors.set(line, e[1].trim());
+    const k = text.match(STACK_RE);
+    if (k) expect.stacks.set(line, k[1].trim());
   });
   return expect;
 }
@@ -98,6 +110,14 @@ async function runCase(file) {
   // own directory (which also holds the fixtures and fixture node_modules).
   const valuesMode = /\/\/@values\s+(all|comments)/.exec(source)?.[1] ?? "all";
   const agg = new Aggregator(prepared.sites, (siteId) => prepared.toSourceLine(siteId), valuesMode);
+  // The same event → line attribution the session gives the Timeline.
+  const lineOf = (msg) =>
+    msg.t === "value" || msg.t === "perf"
+      ? prepared.sites.get(msg.siteId)?.line
+      : msg.siteId === undefined
+        ? undefined
+        : prepared.toSourceLine(msg.siteId);
+  const lastStop = new Map(); // line -> the last stop event attributed to it
   const run = startRun({
     denoPath: deno,
     runnerMain: stageRunner(root),
@@ -111,6 +131,10 @@ async function runCase(file) {
     runTimeoutMs: 10_000,
     onMessage: (msg) => {
       agg.ingest(msg);
+      if (isStop(msg)) {
+        const line = lineOf(msg);
+        if (line !== undefined) lastStop.set(line, msg);
+      }
       // The runner lingers after `exit` to serve expand (phase 5); the
       // harness must kill it or `exited` never resolves.
       if (msg.t === "exit") run.cancel();
@@ -149,6 +173,16 @@ async function runCase(file) {
   for (const [line, want] of expect.coverage) {
     const got = coverage.get(line) ?? "none";
     if (got !== want) failures.push(`line ${line}: coverage want ${want}, got ${got}`);
+  }
+  for (const [line, want] of expect.stacks) {
+    const stop = lastStop.get(line);
+    const got = stop
+      ? stackTrace(stop, prepared.sites, line)
+          .frames.map((f) => f.name)
+          .join(" < ")
+      : "(no stop on this line)";
+    if (got !== want)
+      failures.push(`line ${line}: stack want ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
   }
   for (const [line, want] of expect.errors) {
     const got = errorsAt.get(line) ?? "";

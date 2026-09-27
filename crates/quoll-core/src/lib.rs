@@ -62,8 +62,10 @@ pub struct NapiCaptureSite {
     pub end_line: u32,
     pub end_column: u32,
     /// "expr" | "statement" | "branch" | "comment" | "perf" | "logpoint"
-    /// | "selection" (see protocol CaptureSiteKind).
+    /// | "selection" | "function" (see protocol CaptureSiteKind).
     pub kind: String,
+    /// `function` sites only: the frame name a stack trace shows.
+    pub name: Option<String>,
 }
 
 #[napi(object)]
@@ -278,6 +280,7 @@ pub fn instrument(source: String, opts: InstrumentOpts) -> InstrumentResult {
                 end_line: s.end_line,
                 end_column: s.end_column,
                 kind: s.kind.to_string(),
+                name: s.name.clone(),
             })
             .collect(),
         errors: vec![],

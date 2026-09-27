@@ -59,7 +59,7 @@
 | Live Comments `//?`, perf `//?.`, value-on-selection | Community | 8 |
 | Logpoints (breakpoints as log sites) | Community | 9 |
 | Time Machine (step through execution) | Community | 10 |
-| Interactive Timeline | Pro | 11 (line-level shipped; functions/stacks open) |
+| Interactive Timeline | Pro | 11 |
 | Interactive Value Graphs | Pro | 11 |
 | CPU Profiler | Community | 12 |
 | Snaps (run snippets in Vue/Svelte files) | Community | 13 |
@@ -165,7 +165,10 @@ type CaptureSite = {
   //               sites have mixed zero/non-zero hits renders PARTIAL (yellow)
   //   comment   — `//?` live comment        perf — `//?.` timing comment
   //   logpoint  — from extraSites           selection — from extraSites
-  kind: "expr" | "statement" | "branch" | "comment" | "perf" | "logpoint" | "selection";
+  //   function  — a function body (phase 11): names call-stack frames
+  kind: "expr" | "statement" | "branch" | "comment" | "perf" | "logpoint" | "selection"
+      | "function";
+  name?: string;  // `function` sites: the frame name a stack trace shows
 };
 
 // ── IPC: newline-delimited JSON, bidirectional ─────────────────
@@ -181,6 +184,9 @@ type HostMsg =
 
 // runner -> host. EVERY message carries runId (stale-run discard),
 // seq (monotonic per run; the replayable event-log order), ts (epoch ms).
+// Phase 11 (additive): value/console/perf/error also carry
+//   frames?: { fn?: number; at?: number }[]  — the call stack, outermost first
+//   stackDepth?: number                      — real depth, when frames was cut
 type RunnerMsg = { runId: number; seq: number; ts: number } & (
   | { t: "console"; level: "log" | "info" | "warn" | "error" | "debug";
       args: RemoteValue[]; siteId?: number }          // console.* output
@@ -256,11 +262,12 @@ type RemoteValue = {
     disk belongs to phase 15, which needs a file format regardless.)*
 11. **Interactive Timeline + Value Graphs** — webview consuming the same event
     log (color-coded function/line transitions, stack traces) and `RemoteValue`
-    lazy expansion for visual data-structure graphs. *(Partly shipped: the
-    timeline renders phase 10's tape, one row per stop, click to jump. The
-    FUNCTION dimension — transitions and stack traces — is not free: there is
-    no function-entry capture kind and the runner keeps no stack, so it needs
-    a core change. Value graphs are untouched and need no new capture data.)*
+    lazy expansion for visual data-structure graphs. *(Shipped. The timeline
+    renders phase 10's tape; its FUNCTION dimension was not free, as the
+    protocol had assumed — it took a `function` capture kind, a framed body
+    per function in the Oxc pass, and a shadow call stack in the runner,
+    carried on stop events as an additive `frames` field. Value graphs needed
+    no new capture data: they are `expand` plus identity plus a layout.)*
 12. **CPU Profiler** — drive V8 inspector profiling in the runner
     (`profileStart`/`profileStop`); flamegraph webview; map frames back through
     the source map.
@@ -333,16 +340,20 @@ its captured value, with *Explore value* revealing it in the tree. Phase C
 `extraSites` work. Phase B (`inlineValues: "always" | "hover"`) is deliberately
 deferred.
 
-**Partly done:** phase 11. The Interactive Timeline ships as a webview view
-over phase 10's tape — one row per stop, colour-coded by event kind, click to
-park the Time Machine there and scroll to the line. That half was as cheap as
-the protocol promised. The other two are not started and differ in cost:
-Interactive Value Graphs need no new capture data (they are `expand` plus a
-layout), while the timeline's FUNCTION dimension — colour-coded function
-transitions and stack traces — needs a `function` capture kind in the Oxc pass
-and a call stack in the runner. That is the first place since phase 9 where a
-"cheap because the protocol pre-paid for it" phase turns out to need core work,
-and the spec's own phase-11 line understated it.
+Phase 11 is done. The **Interactive Timeline** is a webview over phase 10's
+tape — one row per stop, colour-coded by event kind, click to park the Time
+Machine there and scroll to the line — plus the function dimension: every row
+knows the call it happened in (a band per function, indented by depth, named
+where the call changes), and the parked stop shows its full stack trace, each
+frame a jump to its line. That dimension was the first place since phase 9
+where "cheap because the protocol pre-paid for it" didn't hold: it needed a
+`function` capture kind, every function body framed by the Oxc pass (with
+`await`/`yield` taking the frame off the stack while suspended), and a shadow
+call stack in the runner, carried on stop events as an additive, optional
+`frames` field. **Interactive Value Graphs** needed nothing new: a Graph view
+walks a value through `expand`, keyed by `objectId` so shared references and
+cycles are edges into one node, and a graph of a capture site follows it
+across runs and Time Machine steps. See DECISIONS "Phase 11 finished".
 
 **Not started:** phases 12–15.
 
@@ -351,7 +362,9 @@ settlement of several promises captured at ONE site can mis-slot; Copy Value
 copies the rendered preview, not a deep serialization; a selection anchored on a
 MIDDLE line of a multi-line expression reveals nothing (the line fallback
 matches a site's start or end line only); browser mode needs a project to
-resolve jsdom from, so it does not work in a bare scratch buffer.
+resolve jsdom from, so it does not work in a bare scratch buffer; a value graph
+(like the explorer) shows objects as they are when expanded, not as they were
+when captured.
 
 **Not shipped:** nothing is on the marketplace and there is no CD pipeline. The
 manifest packages cleanly (`vsce package`), but the VSIX carries only the host

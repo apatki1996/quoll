@@ -8,9 +8,12 @@ import { registerValueHover } from "./hover.ts";
 import {
   Aggregator,
   isStop,
+  stackTrace,
   stepIndices,
   timelineRows,
+  type SiteInfo,
   type SiteValues,
+  type StackTrace,
   type TimelineRow,
 } from "./render/aggregate.ts";
 import { Renderer } from "./render/decorations.ts";
@@ -84,6 +87,8 @@ export class QuollSession implements vscode.Disposable {
   private newAggregator: (() => Aggregator) | undefined;
   /** This run's event → source line map, for Timeline rows (phase 11). */
   private lineOf: ((event: RunnerEvent) => number | undefined) | undefined;
+  /** This run's capture sites — what names a stack frame (phase 11). */
+  private sites: ReadonlyMap<number, SiteInfo> = new Map();
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   private readonly updateEmitter = new vscode.EventEmitter<void>();
   /** Fires (microtask-coalesced) when anything the Values tree or the Timeline
@@ -198,6 +203,7 @@ export class QuollSession implements vscode.Disposable {
       this.agg = undefined;
       this.newAggregator = undefined;
       this.lineOf = undefined;
+      this.sites = new Map();
       this.deps = new Set(); // a broken entry clears the watch graph until it parses again
       const errLines = new Map<number, string>();
       for (const err of prepared.errors) {
@@ -221,6 +227,7 @@ export class QuollSession implements vscode.Disposable {
         valuesMode,
       );
     this.agg = this.newAggregator();
+    this.sites = prepared.sites;
     // Same two attribution maps the Aggregator is given, in one lookup: value
     // and perf carry a capture-site id, console and error a generated line.
     this.lineOf = (event) => {
@@ -393,7 +400,18 @@ export class QuollSession implements vscode.Disposable {
 
   /** The run as Timeline rows (phase 11); the array index is the stop index. */
   timelineRows(): TimelineRow[] {
-    return timelineRows(this.log, this.lineOf ?? (() => undefined));
+    return timelineRows(this.log, this.lineOf ?? (() => undefined), this.sites);
+  }
+
+  /**
+   * The call stack stop `index` happened in, innermost first — the
+   * Timeline's stack trace. Undefined for an index past this run's stops.
+   */
+  stackTraceAt(index: number): StackTrace | undefined {
+    const at = stepIndices(this.log)[index];
+    if (at === undefined) return undefined;
+    const event = this.log[at]!;
+    return stackTrace(event, this.sites, this.lineOf?.(event));
   }
 
   /**

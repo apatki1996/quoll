@@ -40,7 +40,12 @@ function markdown({ siteId, values }: SiteValues): vscode.MarkdownString {
   md.appendCodeblock(lines.join("\n"), "text");
   const args = encodeURIComponent(JSON.stringify([siteId]));
   md.appendMarkdown(`[Explore value](command:${Commands.exploreValue}?${args})`);
-  md.isTrusted = { enabledCommands: [Commands.exploreValue] }; // command link only
+  // Graph what the hover shows: the latest capture, when it's an object.
+  const latest = values[values.length - 1];
+  if (latest?.objectId !== undefined && latest.type !== "function") {
+    md.appendMarkdown(` · [Graph value](command:${Commands.graphValue}?${args})`);
+  }
+  md.isTrusted = { enabledCommands: [Commands.exploreValue, Commands.graphValue] }; // command links only
   return md;
 }
 

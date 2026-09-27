@@ -22,6 +22,124 @@ entry states what the screenshot showed, so the reasoning stands without it.
 
 ---
 
+## 2026-09-27 — Phase 11 finished: a shadow call stack, and value graphs over `expand` [DECIDED]
+
+- **Context:** Phase 11a shipped the Timeline at line level and left two halves
+  open (see the 2026-09-20 entry): function transitions + stack traces, which
+  need a `function` capture kind and a runner-side stack, and Interactive
+  Value Graphs, which need nothing new.
+- **Decision — call stacks:**
+  - **The Rust pass frames every function body**:
+    `const __quoll_f = __quoll.enter(id); try { body } catch (e) {
+    __quoll.unwind(__quoll_f, e); throw e } finally { __quoll.leave(__quoll_f) }`.
+    The `finally` makes `leave` exact on every exit (return, throw, a
+    generator's `.return()`). The `catch` rethrows the same value, so the
+    program can't see it; it exists to snapshot the stack AT THE THROW, since
+    by the time an error is reported every frame has unwound. Expression-bodied
+    arrows become `{ return <expr> }` first — the same value, returned
+    explicitly. Each function also gets a `function` capture site with a
+    `name` (declared, else inferred from where it was put: `const f = () =>`,
+    `{ f() {} }`, `class C { f() {} }` → `C.f`, constructors → `new C`).
+    Names are recorded by the PARENT keyed on the child's span start, so no
+    "pending name" state can be stolen by an unrelated function visited in
+    between.
+  - **A suspended frame is off the stack.** In async functions and
+    generators, `await x` / `yield x` become
+    `__quoll.resume(f, await __quoll.suspend(f, x))`. The operand is evaluated
+    inside the frame and passed through both calls untouched — no wrapper
+    promise, so no extra tick, so no change in how concurrent async code
+    interleaves. Paths that re-enter a frame without `resume` (a rejected
+    await landing in `catch`/`finally`, a generator's `.throw()`) get an
+    idempotent `reenter`. `for await` suspends when handed its iterable and at
+    the end of every iteration (in a `finally`, so `continue` counts), because
+    its awaits appear nowhere in the source — the golden case caught exactly
+    this: the first cut left `drain` on the stack for the rest of the module.
+  - **The runner keeps the stack** (`runner/stack.ts`) as per-CALL tokens, so
+    recursion and concurrent calls of one async function stay distinct.
+    Removing a frame truncates below it and restoring one makes it the top,
+    rather than blind pop/push, so a frame that somehow missed its exit
+    self-heals at the next exit beneath it. `cover` (already called before
+    every statement) records where each frame is, which is what gives outer
+    frames a call-site line. The module body is a frame only when it made the
+    call: set by top-level `cover`, cleared at the next microtask checkpoint —
+    which the module only reaches when it finishes or hits a top-level
+    `await`, and which runs before any timer or reaction.
+  - **Protocol: additive and optional.** `CaptureSiteKind` gains `function`,
+    `CaptureSite` gains `name?`, and the four stop events (`value`,
+    `console`, `perf`, `error`) gain `frames?: StackFrame[]` (outermost first,
+    innermost 64 only) + `stackDepth?` when cut. Named `frames` because
+    `error` already had a `stack` (the V8 text). A host ignoring them renders
+    exactly what it did before. A settling promise's `update` re-emit keeps
+    the stack of its original capture, not the empty stack of the reaction.
+  - **The Timeline derives transitions from the stops**, not from new
+    enter/leave events on the tape: a hot recursive function would flood the
+    tape (and the `MAX_LOG` cap) with rows nobody can step through. Each row
+    gets its innermost function, depth, and whether the CALL changed (same
+    function deeper counts — recursion is the case that matters). The page
+    colours a band per function, indents by depth, names the function where
+    the call changes, and shows the parked stop's resolved stack trace beside
+    the list; a frame click reveals its line without moving the cursor (a
+    selection change is an input that can start a quiet-mode re-run).
+- **Decision — value graphs:** a Graph view in the Quoll panel, walked
+  breadth-first through the existing `expand` round-trip and keyed by
+  `objectId`. The runner already hands out one id per object (a WeakMap in
+  `serialize.ts`), so shared references and cycles come out as edges into one
+  node, which is what distinguishes a graph from the explorer drawn sideways.
+  Two levels open by themselves (30 nodes max), clicks open and close the
+  rest; that state is remembered by key PATH, not id, because a graph of a
+  capture site FOLLOWS the site — it redraws on every run and Time Machine
+  step, and ids are per run. A value reached by expanding another has no site
+  to follow, so it is pinned to its run and says so once that run is gone.
+  Walking (`model.ts`) and layout (`layout.ts`) are pure and host-side; the
+  page only draws SVG it's handed, text via `textContent`. Layout is columns
+  by depth with each node's header level with the field pointing at it (so
+  links run flat); back-links arc in from above.
+- **Rejected:**
+  - *`new Error().stack` per event* — V8's own stack is the truth, but costs
+    a stack walk per capture, needs every frame mapped back through the source
+    map, and sees neither the module-body caller nor our function names.
+  - *Enter/leave as tape events* — see above: flooding, and a "function
+    transition" row with no value to show.
+  - *Wrapping awaits in a helper promise* to catch rejections at resumption —
+    adds a tick per await, which changes the order concurrent async code
+    runs in. `reenter` in `catch`/`finally` gets the same result without it.
+  - *A graph library* (d3, elk, dagre) — a bundled dependency and an asset
+    pipeline for the webview, to lay out the lists and trees a scratchpad
+    produces. Revisit with the tripwire below.
+  - *Graphs with their own capture* (snapshotting object state at capture
+    time) — `expand` reads the object as it is NOW, like the explorer; fixing
+    that is a serialization change for both, not a graph feature.
+- **Cost, measured:** framing roughly doubles a pure call-bound benchmark —
+  `fib(25)` (~243k calls) timed with `//?.` through the real pipeline, 5 runs
+  each: median 15 ms before, 29 ms after, about 60 ns per call (a frame object,
+  a try/catch/finally, and the `at` write in `cover`). Code that does
+  anything per call beyond arithmetic dilutes that quickly, and value capture
+  already costs more per site; accepted for a scratchpad.
+- **Revisit if:** that cost shows up in real scratchpads (the cheap lever is
+  an opt-out that skips framing, trading the Timeline's function dimension
+  for speed); a real stack diverges from
+  the shadow one (the first suspect is a suspension path with no `reenter`,
+  e.g. `await using` disposal); graphs people draw are dense enough that
+  crossings make them unreadable (then a real layout pass — likely a library).
+- **Known limitations:** a graph shows objects as they are when expanded, not
+  as they were when captured (shared with the explorer); a caller that
+  resumes a top-level `await` and calls a function before the next statement
+  starts shows no top-level frame under it; framing adds a `const __quoll_f`
+  and `__quoll_e` to every function scope (the same namespace `__quoll`
+  already claims).
+- **Covered by:** `eval/cases/stacks.ts` (the harness gained `//^`, a line's
+  call stack as the Timeline names it — sync nesting, recursion, callbacks,
+  constructors with `super`, a sibling call while an async function awaits,
+  a rejected await, `for await` with a labelled `continue`, generators resumed
+  by `.next()`/`.throw()`, reactions, timers, and an error's throw site; and
+  every value asserts the framing changed nothing), `runner/stack_test.ts`,
+  `stackTrace`/transition tests in `src/render/aggregate_test.ts`,
+  `src/graph/model_test.ts` (cycles, shared children, auto depth, path-keyed
+  expansion, errors, layout), and an integration test for Graph Value from the
+  hover link.
+
+---
+
 ## 2026-09-25 — Quoll's views belong in the Panel, not the Side Bar [DECIDED]
 
 - **Context:** Values and the new Timeline were contributed to the `explorer`

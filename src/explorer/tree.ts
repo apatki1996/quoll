@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { RemoteValue } from "../../protocol/index.ts";
 import { ContextValues } from "../constants.ts";
+import type { GraphTarget } from "../graph/view.ts";
 import type { ExpandOutcome, QuollSession } from "../session.ts";
 
 /**
@@ -13,8 +14,14 @@ import type { ExpandOutcome, QuollSession } from "../session.ts";
 type Node =
   /** One capture site; `values` is its capture history (latest last). */
   | { kind: "site"; siteId: number; line: number; values: RemoteValue[] }
-  /** One value: an individual capture (`#n`) or an expansion entry (key). */
-  | { kind: "value"; label: string; value: RemoteValue }
+  /** One value: an individual capture (`#n`, which records WHICH capture of
+   * which site it is) or an expansion entry (key). */
+  | {
+      kind: "value";
+      label: string;
+      value: RemoteValue;
+      capture?: { siteId: number; index: number };
+    }
   /** Non-interactive placeholder (expansion errors). */
   | { kind: "info"; label: string };
 
@@ -49,7 +56,7 @@ export class ValueExplorer implements vscode.TreeDataProvider<Node>, vscode.Disp
         item.description =
           `line ${node.line}` + (node.values.length > 1 ? ` · ×${node.values.length}` : "");
         item.tooltip = latest.preview;
-        item.contextValue = ContextValues.value;
+        item.contextValue = contextValue(latest);
         return item;
       }
       case "value": {
@@ -59,7 +66,7 @@ export class ValueExplorer implements vscode.TreeDataProvider<Node>, vscode.Disp
         );
         item.description = node.value.preview;
         item.tooltip = node.value.preview;
-        item.contextValue = ContextValues.value;
+        item.contextValue = contextValue(node.value);
         return item;
       }
       case "info":
@@ -80,6 +87,7 @@ export class ValueExplorer implements vscode.TreeDataProvider<Node>, vscode.Disp
           kind: "value" as const,
           label: `#${i + 1}`,
           value,
+          capture: { siteId: node.siteId, index: i },
         }));
       }
       return this.expandValue(node.values[0]!);
@@ -117,6 +125,24 @@ export class ValueExplorer implements vscode.TreeDataProvider<Node>, vscode.Disp
     }
   }
 
+  /**
+   * What Graph Value draws for this node. A site, or one capture of it, is
+   * FOLLOWED across runs; a value reached by expanding one has no site of its
+   * own, so it is pinned to the run it came from.
+   */
+  graphTarget(node: Node): GraphTarget | undefined {
+    switch (node.kind) {
+      case "site":
+        return { kind: "site", siteId: node.siteId };
+      case "value":
+        if (node.capture) return { kind: "site", ...node.capture };
+        if (!this.session || node.value.objectId === undefined) return undefined;
+        return { kind: "object", value: node.value, generation: this.session.runGeneration };
+      case "info":
+        return undefined;
+    }
+  }
+
   private async expandValue(value: RemoteValue): Promise<Node[]> {
     if (value.objectId === undefined || !this.session) return [];
     const outcome: ExpandOutcome = await this.session.expand(value.objectId);
@@ -130,6 +156,13 @@ export class ValueExplorer implements vscode.TreeDataProvider<Node>, vscode.Disp
     this.sessionSub?.dispose();
     this.changeEmitter.dispose();
   }
+}
+
+/** Graphable when it references an object — functions are leaves in a graph. */
+function contextValue(value: RemoteValue): string {
+  return value.objectId !== undefined && value.type !== "function"
+    ? ContextValues.graphable
+    : ContextValues.value;
 }
 
 function collapsible(expandable: boolean): vscode.TreeItemCollapsibleState {

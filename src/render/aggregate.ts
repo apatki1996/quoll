@@ -9,7 +9,7 @@
  * sites map), while `console`/`error` carry a generated line (→ source line via
  * the run's source map).
  */
-import type { RemoteValue, RunnerEvent } from "../../protocol/index.ts";
+import type { RemoteValue, RunnerEvent, StackFrame, StackInfo } from "../../protocol/index.ts";
 
 export type CoverageState = "covered" | "uncovered" | "partial";
 /** A capture site's source span + kind (structural subset of `CaptureSite`). */
@@ -19,6 +19,8 @@ export interface SiteInfo {
   endLine: number;
   endColumn: number;
   kind: string;
+  /** `function` sites: the name a stack frame shows. */
+  name?: string;
 }
 
 /** One value site's capture history, with the span that located it (hover). */
@@ -258,6 +260,92 @@ export interface TimelineRow {
   preview: string;
   /** Since the run's first RECORDED event (the tape's, not the run's). */
   elapsedMs: number;
+  /** The innermost function's `function` site id; absent at top level. The
+   * Timeline colours a row's function band by it. */
+  fn?: number;
+  /** That function's name, or `TOP_LEVEL`. */
+  fnName: string;
+  /** Functions on the stack (0 at top level), including any the runner cut. */
+  depth: number;
+  /** Is this row in a different CALL than the previous one — another
+   * function, or the same one deeper or shallower (recursion)? The first row
+   * is: it's where the run starts. */
+  transition: boolean;
+}
+
+/** What a stack trace calls code outside any function. */
+export const TOP_LEVEL = "(top level)";
+
+/** One stack-trace frame, resolved for display. */
+export interface TraceFrame {
+  /** The function's name, or `TOP_LEVEL`. */
+  name: string;
+  /** Where that frame is: the event's own line for the innermost frame, the
+   * call in progress for the rest, the function's own line if it hasn't
+   * reached a statement yet. 0 when nothing is known. */
+  line: number;
+  /** The `function` site; absent for the top level. */
+  fn?: number;
+}
+
+/** A stop's call stack, innermost first. `elided` counts the outer frames the
+ * runner didn't send (deep recursion); a trace is never silently short. */
+export interface StackTrace {
+  frames: TraceFrame[];
+  elided: number;
+}
+
+/** The frames a stop event carried (phase 11), outermost first; none for
+ * top-level code and for the events that carry no stack. */
+function framesOf(event: RunnerEvent): { frames: StackFrame[]; depth: number } {
+  switch (event.t) {
+    case "value":
+    case "console":
+    case "perf":
+    case "error": {
+      const { frames = [], stackDepth }: StackInfo = event;
+      // The top-level frame (no `fn`) is a position, not a call, so depth
+      // counts only function frames — which `stackDepth` already does when
+      // the runner had to cut.
+      return { frames, depth: stackDepth ?? frames.filter((f) => f.fn !== undefined).length };
+    }
+    default:
+      return { frames: [], depth: 0 };
+  }
+}
+
+/**
+ * The call stack a stop happened in, innermost first — the Timeline's stack
+ * trace. `line` is the stop's own source line (the innermost frame is AT the
+ * event, which a multi-line statement's start would misplace).
+ */
+export function stackTrace(
+  event: RunnerEvent,
+  sites: ReadonlyMap<number, SiteInfo>,
+  line: number | undefined,
+): StackTrace {
+  const { frames, depth } = framesOf(event);
+  // Walked innermost first, which is how a trace reads.
+  const trace: TraceFrame[] = [];
+  for (let i = frames.length - 1; i >= 0; i--) {
+    const { fn, at } = frames[i]!;
+    const site = fn === undefined ? undefined : sites.get(fn);
+    const where = at === undefined ? site?.line : sites.get(at)?.line;
+    const frame: TraceFrame = {
+      name: fn === undefined ? TOP_LEVEL : (site?.name ?? `function #${fn}`),
+      line: where ?? 0,
+    };
+    if (fn !== undefined) frame.fn = fn;
+    trace.push(frame);
+  }
+  if (trace.length === 0) {
+    // Top-level code: the stack is the module body, at the event.
+    trace.push({ name: TOP_LEVEL, line: line ?? 0 });
+  } else if (line !== undefined) {
+    trace[0]!.line = line; // the innermost frame is AT the event
+  }
+  const shown = trace.filter((f) => f.fn !== undefined).length;
+  return { frames: trace, elided: Math.max(0, depth - shown) };
 }
 
 /** One line of text for a recorded event — what a Timeline row shows. */
@@ -287,15 +375,26 @@ function rowPreview(msg: RunnerEvent): string {
 export function timelineRows(
   log: readonly (RunnerEvent & { ts: number })[],
   lineOf: (event: RunnerEvent) => number | undefined,
+  sites: ReadonlyMap<number, SiteInfo> = new Map(),
 ): TimelineRow[] {
   const first = log[0]?.ts;
+  let previous: { fn?: number; depth: number } | undefined;
   return stepIndices(log).map((at) => {
     const event = log[at]!;
-    return {
+    const { frames, depth } = framesOf(event);
+    const fn = frames[frames.length - 1]?.fn;
+    const transition = previous === undefined || previous.fn !== fn || previous.depth !== depth;
+    previous = { fn, depth };
+    const row: TimelineRow = {
       line: lineOf(event) ?? 0,
       kind: event.t,
       preview: rowPreview(event),
       elapsedMs: first === undefined ? 0 : event.ts - first,
+      fnName: fn === undefined ? TOP_LEVEL : (sites.get(fn)?.name ?? `function #${fn}`),
+      depth,
+      transition,
     };
+    if (fn !== undefined) row.fn = fn;
+    return row;
   });
 }

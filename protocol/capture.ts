@@ -14,6 +14,9 @@
  * - `perf`      — `//?.` timing comment
  * - `logpoint`  — from `InstrumentOpts.extraSites` (VS Code breakpoint)
  * - `selection` — from `InstrumentOpts.extraSites` (show-value-on-selection)
+ * - `function`  — a function body (phase 11). Never produces a value or a
+ *                 coverage hit; it names the frames of the call stack that
+ *                 `value`/`console`/`perf`/`error` events carry.
  */
 export type CaptureSiteKind =
   | "expr"
@@ -22,7 +25,8 @@ export type CaptureSiteKind =
   | "comment"
   | "perf"
   | "logpoint"
-  | "selection";
+  | "selection"
+  | "function";
 
 export type ExtraSiteKind = Extract<CaptureSiteKind, "logpoint" | "selection">;
 
@@ -68,6 +72,12 @@ export type CaptureSite = {
   endLine: number;
   endColumn: number;
   kind: CaptureSiteKind;
+  /**
+   * `function` sites only: the name a stack trace shows — the declared name,
+   * else the one inferred from where the function was put (`const f = () =>`,
+   * `{ f() {} }`, `class C { f() {} }` → `C.f`), else `(anonymous)`.
+   */
+  name?: string;
 };
 
 /** Standard source map v3 (the single map of the single Oxc pass). */
