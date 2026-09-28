@@ -35,9 +35,34 @@ export type RunnerMsgMeta = {
   ts: number;
 };
 
+/**
+ * One frame of the runner's shadow call stack (phase 11).
+ * - `fn` — the `function` capture site executing; ABSENT for the module's top
+ *          level, which only ever appears as the outermost frame, and only
+ *          when the module body itself made the call.
+ * - `at` — the statement or branch site this frame most recently entered:
+ *          where it is. For an outer frame, that is the call in progress.
+ *          Absent before the frame's first statement (an expression-bodied
+ *          arrow has none).
+ */
+export type StackFrame = { fn?: number; at?: number };
+
+/**
+ * Carried by the events a user can stop at (`value`, `console`, `perf`,
+ * `error`): the call stack when the event happened, OUTERMOST first. (Named
+ * `frames` because `error` already had a `stack` — the V8 stack text.) Absent
+ * means top-level code. Only the innermost frames are sent; `stackDepth` is
+ * present when that cut anything, and holds how many FUNCTION frames there
+ * really were (the top-level position isn't a call, so it never counts).
+ *
+ * Additive and optional, so a host that ignores it renders exactly what it
+ * did before phase 11.
+ */
+export type StackInfo = { frames?: StackFrame[]; stackDepth?: number };
+
 export type RunnerEvent =
   /** console.* output. */
-  | { t: "console"; level: ConsoleLevel; args: RemoteValue[]; siteId?: number }
+  | ({ t: "console"; level: ConsoleLevel; args: RemoteValue[]; siteId?: number } & StackInfo)
   /**
    * Expression capture. Re-emitted with the same siteId when a Promise
    * settles late (after `done`, before `exit`); the re-emit carries
@@ -46,12 +71,16 @@ export type RunnerEvent =
    * value, not a new capture. Absent/false means a fresh capture (append;
    * loops produce several).
    */
-  | { t: "value"; siteId: number; value: RemoteValue; update?: true }
+  | ({ t: "value"; siteId: number; value: RemoteValue; update?: true } & StackInfo)
   /** `//?.` timing. */
-  | { t: "perf"; siteId: number; durationMs: number }
+  | ({ t: "perf"; siteId: number; durationMs: number } & StackInfo)
   /** Statement & branch sites (see CaptureSiteKind). */
   | { t: "cover"; siteId: number; hits: number }
-  | { t: "error"; message: string; stack?: string; siteId?: number }
+  /**
+   * `stack` is the V8 stack TEXT. `frames` (phase 11) is the call stack at
+   * the THROW, not where the error was finally reported.
+   */
+  | ({ t: "error"; message: string; stack?: string; siteId?: number } & StackInfo)
   /**
    * Sync run + microtask flush complete. Late async `value`/`console`
    * messages MAY still follow until `exit`: the runner stays alive while

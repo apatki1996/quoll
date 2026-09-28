@@ -16,6 +16,7 @@
 // packaged extension only.
 import type { ConsoleLevel, HostMsg, RunnerEvent, RunnerMsg } from "../protocol/index.ts";
 import { expandObject, settledPromiseValue, toRemoteValue } from "./serialize.ts";
+import { ShadowStack, type Frame } from "./stack.ts";
 
 // Poll interval of the post-`done` wait loop. Internal: the spec's
 // `asyncGraceMs` quiet-window framing was retired (see DECISIONS "Gap 2") —
@@ -225,18 +226,25 @@ function patchTimers(): void {
 function trapAsyncErrors(): void {
   globalThis.addEventListener("error", (e) => {
     e.preventDefault();
-    const stack = e.error instanceof Error ? e.error.stack : undefined;
-    send({ t: "error", message: e.message || String(e.error), stack, siteId: userCallLine(stack) });
+    const trace = e.error instanceof Error ? e.error.stack : undefined;
+    send({
+      t: "error",
+      message: e.message || String(e.error),
+      stack: trace,
+      siteId: userCallLine(trace),
+      ...stack.thrownFrom(e.error),
+    });
   });
   globalThis.addEventListener("unhandledrejection", (e) => {
     e.preventDefault();
     const reason: unknown = e.reason;
-    const stack = reason instanceof Error ? reason.stack : undefined;
+    const trace = reason instanceof Error ? reason.stack : undefined;
     send({
       t: "error",
       message: reason instanceof Error ? reason.message : String(reason),
-      stack,
-      siteId: userCallLine(stack),
+      stack: trace,
+      siteId: userCallLine(trace),
+      ...stack.thrownFrom(reason),
     });
   });
 }
@@ -248,6 +256,12 @@ const VALUE_CAP_PER_SITE = 500;
 const coverHits = new Map<number, number>();
 const flushedThrough = new Map<number, number>();
 
+// Captured now, before user code (or jsdom's window) can replace it: the
+// shadow stack's top-level tracking relies on the real microtask checkpoint.
+const nativeQueueMicrotask = globalThis.queueMicrotask.bind(globalThis);
+/** Phase 11: the call stack every stop event carries (see runner/stack.ts). */
+const stack = new ShadowStack(nativeQueueMicrotask);
+
 /** The runtime global the instrumented code calls into (see instrument.rs). */
 function installQuollRuntime(): void {
   const valuesSent = new Map<number, number>();
@@ -256,7 +270,11 @@ function installQuollRuntime(): void {
       const n = (valuesSent.get(siteId) ?? 0) + 1;
       valuesSent.set(siteId, n);
       if (n <= VALUE_CAP_PER_SITE) {
-        send({ t: "value", siteId, value: toRemoteValue(value) });
+        // Taken once: a settling promise re-emits from a reaction, where the
+        // stack is empty — but it is still THIS capture's value, so it keeps
+        // the stack of the moment it was captured.
+        const where = stack.snapshot();
+        send({ t: "value", siteId, value: toRemoteValue(value), ...where });
         // Re-emit when a captured promise settles, so an un-awaited promise
         // updates from `<pending>` to `then <v>` / `catch <e>` (DECISIONS.md
         // gaps 1 & 2). The grace window stays alive while timers are pending,
@@ -272,6 +290,7 @@ function installQuollRuntime(): void {
                 siteId,
                 value: settledPromiseValue("fulfilled", settled),
                 update: true,
+                ...where,
               }),
             (reason) =>
               send({
@@ -279,6 +298,7 @@ function installQuollRuntime(): void {
                 siteId,
                 value: settledPromiseValue("rejected", reason),
                 update: true,
+                ...where,
               }),
           );
         }
@@ -287,6 +307,7 @@ function installQuollRuntime(): void {
     },
     cover(siteId: number): void {
       coverHits.set(siteId, (coverHits.get(siteId) ?? 0) + 1);
+      stack.cover(siteId);
     },
     // `//?.` timing (Phase 8): time the deferred thunk and report durationMs.
     // The value is returned unchanged so program semantics are preserved; a
@@ -298,8 +319,39 @@ function installQuollRuntime(): void {
       try {
         return thunk();
       } finally {
-        send({ t: "perf", siteId, durationMs: performance.now() - start });
+        send({
+          t: "perf",
+          siteId,
+          durationMs: performance.now() - start,
+          ...stack.snapshot(),
+        });
       }
+    },
+    // Phase 11 frames — each call the Rust pass emits maps 1:1 onto the
+    // shadow stack; the pass's module doc says where each one goes.
+    enter: (fn: number): Frame => stack.enter(fn),
+    leave: (frame: Frame): void => stack.leave(frame),
+    suspend: <T>(frame: Frame, value?: T): T | undefined => stack.suspend(frame, value),
+    resume: <T>(frame: Frame, value: T): T => stack.resume(frame, value),
+    reenter: (frame: Frame): void => stack.reenter(frame),
+    unwind: (frame: Frame, thrown: unknown): void => stack.unwind(frame, thrown),
+    topSuspend: <T>(value?: T): T | undefined => stack.topSuspend(value),
+    topResume: <T>(value: T): T => stack.topResume(value),
+    // `await using` brackets: synchronous resources whose disposal marks
+    // where the async disposal between them starts and ends.
+    suspending: (frame: Frame): Disposable => disposing(() => stack.suspend(frame)),
+    resuming: (frame: Frame): Disposable => disposing(() => stack.reenter(frame)),
+    topSuspending: (): Disposable => disposing(() => stack.topSuspend()),
+    topResuming: (): Disposable => disposing(() => stack.topResume(undefined)),
+  };
+}
+
+/** A synchronous resource whose disposal runs `onDispose` — and nothing else:
+ * no return value, so disposing it can't add an `Await`. */
+function disposing(onDispose: () => void): Disposable {
+  return {
+    [Symbol.dispose]() {
+      onDispose();
     },
   };
 }
@@ -325,6 +377,7 @@ function patchConsole(): void {
         level,
         args: args.map(toRemoteValue),
         siteId: userCallLine(new Error().stack),
+        ...stack.snapshot(),
       });
     };
   }
@@ -359,12 +412,13 @@ async function handleRun(msg: Extract<HostMsg, { t: "run" }>): Promise<void> {
     // top-level await resolves before `done` — sync pass + microtask flush.
     await import(entry);
   } catch (err) {
-    const stack = err instanceof Error ? err.stack : undefined;
+    const trace = err instanceof Error ? err.stack : undefined;
     send({
       t: "error",
       message: err instanceof Error ? err.message : String(err),
-      stack,
-      siteId: userCallLine(stack),
+      stack: trace,
+      siteId: userCallLine(trace),
+      ...stack.thrownFrom(err),
     });
   }
   flushCover();

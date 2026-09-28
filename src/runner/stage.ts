@@ -16,13 +16,13 @@ import { join } from "node:path";
  * tool's install dir" pattern (NODE_PATH / Jest modulePaths / webpack context),
  * applied to Deno's cwd-fallback. See DECISIONS.md "how to anchor npm resolution".
  *
- * The runtime closure is just `main.ts` + `serialize.ts`: the `protocol/*`
+ * The runtime closure is `main.ts`, `serialize.ts` and `stack.ts`: the `protocol/*`
  * imports are `import type` and erased by Deno before resolution — the same
  * invariant that lets the packaged extension omit `protocol/` (see
  * `runner/main.ts`). A future VALUE import from `protocol/` would need staging
  * here too; the runner comment guards against that.
  */
-const RUNTIME_FILES = ["main.ts", "serialize.ts"] as const;
+const RUNTIME_FILES = ["main.ts", "serialize.ts", "stack.ts"] as const;
 
 /** Cached per extensionRoot: stage once per process, reuse every run. */
 const staged = new Map<string, string>();

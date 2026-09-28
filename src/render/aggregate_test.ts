@@ -1,6 +1,13 @@
 // Aggregator unit tests: `mise exec -- deno test src/render/ runner/`
 import { strict as assert } from "node:assert";
-import { Aggregator, stepIndices, timelineRows, type SiteInfo } from "./aggregate.ts";
+import {
+  Aggregator,
+  stackTrace,
+  stepIndices,
+  timelineRows,
+  TOP_LEVEL,
+  type SiteInfo,
+} from "./aggregate.ts";
 
 /** A site spanning one whole line by default; pass a span to nest sites. */
 function site(line: number, kind: string, column = 0, endColumn = 80, endLine = line): SiteInfo {
@@ -241,6 +248,101 @@ Deno.test("timeline rows tolerate an unattributable event", () => {
   // rather than dropping the row, so the timeline stays a complete record.
   assert.deepEqual(
     timelineRows(log, () => undefined),
-    [{ line: 0, kind: "console", preview: "x", elapsedMs: 0 }],
+    [
+      {
+        line: 0,
+        kind: "console",
+        preview: "x",
+        elapsedMs: 0,
+        fnName: TOP_LEVEL,
+        depth: 0,
+        transition: true,
+      },
+    ],
   );
+});
+
+// ── phase 11 call stacks ──────────────────────────────────────────────
+
+/** Two named functions and the statements their frames can be "at". */
+const fnSites = new Map<number, SiteInfo>([
+  [1, { ...site(2, "function"), name: "outer" }],
+  [2, { ...site(6, "function"), name: "inner" }],
+  [10, site(12, "statement")], // top-level call of outer
+  [11, site(3, "statement")], // outer's call of inner
+  [12, site(7, "statement")],
+]);
+
+function stopIn(frames: { fn?: number; at?: number }[], extra: object = {}) {
+  return {
+    t: "value",
+    siteId: 99,
+    value: { type: "number", preview: "0" },
+    frames,
+    ts: 0,
+    ...extra,
+  } as never;
+}
+
+Deno.test("stack trace: innermost first, each frame where it is", () => {
+  const trace = stackTrace(
+    stopIn([{ at: 10 }, { fn: 1, at: 11 }, { fn: 2, at: 12 }]),
+    fnSites,
+    8, // the stop's own line: a multi-line statement's start would misplace it
+  );
+  assert.deepEqual(trace, {
+    frames: [
+      { name: "inner", line: 8, fn: 2 },
+      { name: "outer", line: 3, fn: 1 },
+      { name: TOP_LEVEL, line: 12 },
+    ],
+    elided: 0,
+  });
+});
+
+Deno.test("stack trace: top-level code, and a frame that hasn't reached a statement", () => {
+  assert.deepEqual(stackTrace(stopIn([]), fnSites, 4), {
+    frames: [{ name: TOP_LEVEL, line: 4 }],
+    elided: 0,
+  });
+  // An expression-bodied arrow has no statement: its frame shows its own line.
+  const trace = stackTrace(stopIn([{ fn: 1 }, { fn: 2 }]), fnSites, undefined);
+  assert.deepEqual(
+    trace.frames.map((f) => [f.name, f.line]),
+    [
+      ["inner", 6],
+      ["outer", 2],
+    ],
+  );
+});
+
+Deno.test("stack trace: frames the runner cut are counted, not silently lost", () => {
+  const trace = stackTrace(stopIn([{ fn: 2 }, { fn: 2 }], { stackDepth: 50 }), fnSites, 7);
+  assert.equal(trace.frames.length, 2);
+  assert.equal(trace.elided, 48);
+});
+
+Deno.test("timeline rows mark function transitions, recursion included", () => {
+  const log = [
+    stopIn([]), // top level
+    stopIn([{ at: 10 }, { fn: 1 }]), // → outer
+    stopIn([{ at: 10 }, { fn: 1 }]), // still outer: no transition
+    stopIn([{ at: 10 }, { fn: 1 }, { fn: 1 }]), // outer recursing: same fn, deeper
+    stopIn([{ at: 10 }, { fn: 1 }, { fn: 2 }]), // sibling depth, another fn
+    stopIn([]), // back at top level
+  ];
+  const rows = timelineRows(log, () => 1, fnSites);
+  assert.deepEqual(
+    rows.map((r) => [r.fnName, r.depth, r.transition]),
+    [
+      [TOP_LEVEL, 0, true],
+      ["outer", 1, true],
+      ["outer", 1, false],
+      ["outer", 2, true],
+      ["inner", 2, true],
+      [TOP_LEVEL, 0, true],
+    ],
+  );
+  assert.equal(rows[4]!.fn, 2);
+  assert.equal(rows[0]!.fn, undefined);
 });

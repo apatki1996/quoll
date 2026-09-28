@@ -63,6 +63,11 @@
       {
         "command": "quoll.goToStop",
         "title": "Go to Timeline Stop"
+      },
+      {
+        "command": "quoll.graphValue",
+        "title": "Graph Value",
+        "icon": "$(type-hierarchy)"
       }
     ],
     "keybindings": [
@@ -103,6 +108,12 @@
           "name": "Timeline",
           "type": "webview",
           "icon": "$(history)"
+        },
+        {
+          "id": "quollGraph",
+          "name": "Graph",
+          "type": "webview",
+          "icon": "$(type-hierarchy)"
         }
       ]
     },
@@ -125,12 +136,21 @@
         {
           "command": "quoll.goToStop",
           "when": "false"
+        },
+        {
+          "command": "quoll.graphValue",
+          "when": "false"
         }
       ],
       "view/item/context": [
         {
+          "command": "quoll.graphValue",
+          "when": "view == quollValues && viewItem == quollValueGraphable",
+          "group": "inline"
+        },
+        {
           "command": "quoll.copyValue",
-          "when": "view == quollValues && viewItem == quollValue",
+          "when": "view == quollValues && viewItem =~ /^quollValue/",
           "group": "inline"
         }
       ]
@@ -203,7 +223,7 @@
     "check:bundle": "node scripts/check-native-bundle.mjs",
     "check:timeout": "node scripts/timeout-check.mjs",
     "check:jsdom": "node scripts/jsdom-check.mjs",
-    "test:unit": "deno check runner/main.ts && deno test --allow-read --allow-write --allow-run --allow-env --allow-sys src/render src/instrument src/runner runner",
+    "test:unit": "deno check runner/main.ts && deno test --allow-read --allow-write --allow-run --allow-env --allow-sys src/render src/graph src/instrument src/runner runner",
     "eval": "node eval/run.mjs",
     "fmt": "oxfmt && cargo fmt --manifest-path crates/quoll-core/Cargo.toml",
     "fmt:check": "oxfmt --check && cargo fmt --manifest-path crates/quoll-core/Cargo.toml --check",

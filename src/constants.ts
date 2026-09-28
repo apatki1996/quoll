@@ -16,6 +16,7 @@ export const Commands = {
   stepForward: "quoll.stepForward",
   live: "quoll.live",
   goToStop: "quoll.goToStop",
+  graphValue: "quoll.graphValue",
 } as const;
 
 /** Context key gating the Time Machine keybindings (true while stepping). */
@@ -25,11 +26,14 @@ export const STEPPING_CONTEXT = "quoll.stepping";
 export const Views = {
   values: "quollValues",
   timeline: "quollTimeline",
+  graph: "quollGraph",
 } as const;
 
 /** `TreeItem.contextValue` values matched by `contributes.menus` `when` clauses. */
 export const ContextValues = {
   value: "quollValue",
+  /** A value that references objects, so it has a graph worth drawing. */
+  graphable: "quollValueGraphable",
 } as const;
 
 /** OutputChannel display name. */

@@ -27,6 +27,7 @@ oxc_semantic = "0.147.0"
 oxc_sourcemap = "8.0.1"
 oxc_span = "0.147.0"
 oxc_str = "0.147.0"
+oxc_syntax = "0.147.0"
 oxc_transformer = "0.147.0"
 
 [build-dependencies]

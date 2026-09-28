@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import { Commands, EXTENSION_ID, OUTPUT_CHANNEL, Views } from "./constants.ts";
 import { ValueExplorer } from "./explorer/tree.ts";
-import { TimelineView } from "./timeline/view.ts";
+import { GraphView } from "./graph/view.ts";
+import { revealLine, TimelineView } from "./timeline/view.ts";
 import { detectDeno, probeDeno } from "./runner/deno.ts";
 import { QuollSession } from "./session.ts";
 
@@ -10,12 +11,14 @@ let extensionRoot: string;
 let session: QuollSession | undefined;
 let explorer: ValueExplorer;
 let timeline: TimelineView;
+let graph: GraphView;
 
 export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel(OUTPUT_CHANNEL);
   extensionRoot = context.extensionUri.fsPath;
   explorer = new ValueExplorer();
   timeline = new TimelineView();
+  graph = new GraphView();
   // A TreeView (not just a registered provider) because Explore Value reveals
   // the hovered site in it.
   const valuesView = vscode.window.createTreeView(Views.values, { treeDataProvider: explorer });
@@ -24,7 +27,9 @@ export function activate(context: vscode.ExtensionContext): void {
     output,
     explorer,
     timeline,
+    graph,
     vscode.window.registerWebviewViewProvider(Views.timeline, timeline),
+    vscode.window.registerWebviewViewProvider(Views.graph, graph),
     valuesView,
     vscode.commands.registerCommand(Commands.start, startOnCurrentFile),
     vscode.commands.registerCommand(Commands.stop, () => {
@@ -48,6 +53,15 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(Commands.goToStop, (index: number, generation?: number) =>
       goToStop(index, generation),
     ),
+    // Graph Value (phase 11): a site id from the hover's link, or a Values
+    // tree node from its inline action. Returns whether a graph was drawn.
+    vscode.commands.registerCommand(Commands.graphValue, (arg: unknown) => {
+      const target =
+        typeof arg === "number"
+          ? ({ kind: "site", siteId: arg } as const)
+          : explorer.graphTarget(arg as Parameters<ValueExplorer["graphTarget"]>[0]);
+      return target ? graph.show(target) : false;
+    }),
   );
   output.appendLine("[quoll] activated");
 }
@@ -91,6 +105,7 @@ async function startOnCurrentFile(): Promise<void> {
   session = new QuollSession(editor.document, output, extensionRoot);
   explorer.setSession(session);
   timeline.setSession(session);
+  graph.setSession(session);
   output.show(true);
 }
 
@@ -99,6 +114,7 @@ function stopSession(): void {
   session = undefined;
   explorer.setSession(undefined);
   timeline.setSession(undefined);
+  graph.setSession(undefined);
 }
 
 /**
@@ -115,11 +131,7 @@ function goToStop(index: number, generation?: number): boolean {
   const row = session?.timelineRows()[index];
   if (!row) return false; // no session, or an index past this run's stops
   session!.stepTo(index);
-  const editor = vscode.window.visibleTextEditors.find((e) => e.document === session!.doc);
-  if (editor && row.line >= 1 && row.line <= editor.document.lineCount) {
-    const range = editor.document.lineAt(row.line - 1).range;
-    editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
-  }
+  revealLine(session!.doc, row.line);
   return true;
 }
 

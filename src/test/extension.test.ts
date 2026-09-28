@@ -51,9 +51,10 @@ suite("Quoll extension", () => {
   test("contributed view ids are focusable", async () => {
     await vscode.commands.executeCommand("quollValues.focus");
     await vscode.commands.executeCommand("quollTimeline.focus");
+    await vscode.commands.executeCommand("quollGraph.focus");
   });
 
-  test("both views live in the Quoll panel, not the side bar", () => {
+  test("the views live in the Quoll panel, not the side bar", () => {
     // Placement is a manifest-only fact, so only the manifest can assert it —
     // focusing a view works wherever it is contributed.
     const contributes = vscode.extensions.getExtension(EXTENSION_ID)!.packageJSON.contributes;
@@ -64,8 +65,8 @@ suite("Quoll extension", () => {
     );
     assert.deepStrictEqual(
       (contributes.views.quollPanel ?? []).map((v: { id: string }) => v.id),
-      ["quollValues", "quollTimeline"],
-      "both views belong to the panel container",
+      ["quollValues", "quollTimeline", "quollGraph"],
+      "every view belongs to the panel container",
     );
     assert.strictEqual(contributes.views.explorer, undefined, "nothing should remain in explorer");
   });
@@ -215,6 +216,35 @@ suite("Quoll extension", () => {
     await vscode.commands.executeCommand("quoll.stop");
     const afterStop = await vscode.commands.executeCommand<boolean>("quoll.goToStop", 0);
     assert.strictEqual(afterStop, false, "goToStop should refuse when no session is running");
+  });
+
+  // Value graphs (phase 11) through the path a user takes: the hover offers
+  // Graph value for an object, and its link's command draws the graph from a
+  // real runner's `expand`. Walking and layout are unit-tested in
+  // src/graph/model_test.ts; this is the glue between them and the editor.
+  test("graph value draws an object from the hover, and refuses a primitive", async function () {
+    if (!hasNativeCore()) return this.skip();
+    const doc = await vscode.workspace.openTextDocument({
+      language: "typescript",
+      content: "const list = { v: 1, next: { v: 2, next: null } };\nconst n = 42;\n",
+    });
+    await vscode.window.showTextDocument(doc);
+    await vscode.commands.executeCommand("quoll.start");
+
+    const hover = await waitFor(() => hoverAt(doc, new vscode.Position(0, 16)));
+    const link = /command:quoll\.graphValue\?([^)\s]+)/.exec(hover ?? "");
+    assert.ok(link, `an object's hover should offer Graph value (got: ${hover})`);
+    const [siteId] = JSON.parse(decodeURIComponent(link[1]!)) as [number];
+    const drawn = await vscode.commands.executeCommand<boolean>("quoll.graphValue", siteId);
+    assert.strictEqual(drawn, true, "the object should draw as a graph");
+
+    const primitive = await hoverAt(doc, new vscode.Position(1, 11));
+    assert.ok(primitive?.includes("42"), `expected the number's hover (got: ${primitive})`);
+    assert.ok(!primitive?.includes("Graph value"), "a primitive has no graph to offer");
+
+    await vscode.commands.executeCommand("quoll.stop");
+    const afterStop = await vscode.commands.executeCommand<boolean>("quoll.graphValue", siteId);
+    assert.strictEqual(afterStop, false, "no session, no graph");
   });
 });
 

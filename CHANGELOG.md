@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Value graphs** — *Graph Value* (on an object in the Values view, or in its
+  hover) draws the objects a value reaches and the references between them in
+  a new *Graph* view. A shared child is one node with two arrows into it, and
+  a cycle is an arrow back rather than an endless unrolling. Two levels open
+  on their own; click any object to open or close it. A graph of an
+  expression follows it: edit the code, or step the Time Machine, and it
+  redraws from the value there — keeping what you opened. (Phase 11.)
+- **Call stacks in the Timeline** — each moment now knows which call it
+  happened in. Rows are banded by function and indented by call depth, with
+  the function named wherever the call changes, so recursion and callbacks
+  read at a glance. Select a moment to see its full call stack beside the
+  list; click a frame to jump to its line. While an async function or
+  generator is suspended — at an `await`, a `yield`, a `for await`, or an
+  `await using` disposal — it isn't on the stack of the code that runs in the
+  meantime. (Phase 11, completing the Timeline.)
 - **A Quoll panel** — the Values tree and the Timeline now live in a *Quoll*
   tab in the bottom panel, beside Problems and Terminal, instead of the primary
   side bar. That's where a run's output belongs: it gets horizontal room for
@@ -17,8 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   happened: one row per captured moment, colour-coded by kind, with its source
   line and offset in time. Click a row to park the Time Machine on that moment
   and scroll to the line. It reads the same tape the Time Machine steps, so the
-  two can never disagree. (Phase 11, line level — function transitions and
-  stack traces still to come.)
+  two can never disagree. (Phase 11.)
 - **Time Machine** — step back and forth through a finished run (Phase 10).
   *Quoll: Step Back* enters it (`alt+left`/`alt+right` to move, `escape` to
   leave, or click the status bar), and the editor — inline values, errors,
