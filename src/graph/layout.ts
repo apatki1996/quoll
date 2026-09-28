@@ -65,9 +65,9 @@ function widthOf(node: GraphNode): number {
 }
 
 function heightOf(node: GraphNode): number {
-  if (!node.fields) return HEADER;
-  const rows = node.fields.length + (node.more ? 1 : 0) + (node.error ? 1 : 0);
-  return HEADER + rows * ROW + PAD;
+  // An expansion that failed has no fields but does have a row to show: why.
+  const rows = (node.fields?.length ?? 0) + (node.more ? 1 : 0) + (node.error ? 1 : 0);
+  return rows === 0 && !node.fields ? HEADER : HEADER + rows * ROW + PAD;
 }
 
 /** Does a link point back to the same or an earlier column? */

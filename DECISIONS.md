@@ -122,11 +122,9 @@ entry states what the screenshot showed, so the reasoning stands without it.
   e.g. `await using` disposal); graphs people draw are dense enough that
   crossings make them unreadable (then a real layout pass — likely a library).
 - **Known limitations:** a graph shows objects as they are when expanded, not
-  as they were when captured (shared with the explorer); a caller that
-  resumes a top-level `await` and calls a function before the next statement
-  starts shows no top-level frame under it; framing adds a `const __quoll_f`
-  and `__quoll_e` to every function scope (the same namespace `__quoll`
-  already claims).
+  as they were when captured (shared with the explorer); framing adds a
+  `const __quoll_f` and `__quoll_e` to every function scope (the same
+  namespace `__quoll` already claims); see also the amendment below.
 - **Covered by:** `eval/cases/stacks.ts` (the harness gained `//^`, a line's
   call stack as the Timeline names it — sync nesting, recursion, callbacks,
   constructors with `super`, a sibling call while an async function awaits,
@@ -137,6 +135,51 @@ entry states what the screenshot showed, so the reasoning stands without it.
   `src/graph/model_test.ts` (cycles, shared children, auto depth, path-keyed
   expansion, errors, layout), and an integration test for Graph Value from the
   hover link.
+
+**Amended 2026-09-28 (review):** a review pass found that "a suspended frame
+is off the stack" had holes, plus three Graph view bugs. All fixed and covered
+in `eval/cases/stacks.ts` (every new case fails against the first cut, most
+by leaking one frame into every later stack in the module), `runner/stack_test.ts`
+and `src/graph/model_test.ts`:
+- *Implicit suspensions.* An async generator's `return x` awaits `x`, and
+  `await using` awaits its disposal; neither appears in the source, so the
+  frame stayed on the stack meanwhile. `return x` now suspends after `x` is
+  evaluated. `await using` is bracketed by two synchronous `using` resources
+  — disposal runs in reverse order, so one runs just before the async
+  disposal (suspend) and one just after it (resume). That needs no nesting,
+  so no scope changes, and a synchronous resource adds no `Await`; checked in
+  Deno by counting ticks with and without the brackets, `null` resources
+  included. (A first version nested the rest of the block in a `try` and had
+  to stand down whenever a closure named a later `const` — and standing down
+  meant leaking again. Rejected.)
+- *Labelled jumps out of `for await`.* `break outer` skipped the resume that
+  followed the loop. The whole loop now sits in `try { … } finally { resume }`.
+- *Top-level `await`.* After one resumes, the module body runs inside a
+  microtask, so the "cleared at the next checkpoint" flag outlived it into
+  reactions already queued, which then showed a spurious `(top level)` caller.
+  The module body is now suspended and resumed like a frame
+  (`topSuspend`/`topResume` around each top-level `await`, `topSuspend` at the
+  end), and a throw leaving a frame the module body called clears it too —
+  the golden file itself caught that one, since it ends in an uncaught throw.
+  The checkpoint clear remains only as a fallback.
+- *Nested function declarations.* Moving them into the frame's `try` block
+  made them block-scoped, so `var g; function g() {}` in one body became a
+  redeclaration error in plain V8. (Deno's TS pipeline happened to accept the
+  output, so no user saw it, but the rewrite was wrong.) They are now hoisted
+  above the frame, where they were.
+- *Graph view.* A target from a previous session resolved against the next
+  one (run generations restart at 1 per session, objectIds at `o1` per
+  runner), drawing an unrelated object; targets are now dropped on a session
+  change. A failed expansion's error row was laid out zero-height and clipped.
+  An older build could still finish and paint over a newer "no value" state.
+- **Still limitations (recorded, not fixed):** code in parameter defaults and
+  destructuring runs before the body, so outside its function's frame; a
+  `let`/`const` that illegally redeclares a parameter now runs as shadowing
+  instead of failing (V8 would reject it; fixing it means surfacing Oxc's
+  semantic errors, a separate change); `for (await using x of …)` loop-head
+  disposal isn't bracketed; a module body that throws at the top level
+  (not through a function) leaves the flag to the checkpoint fallback; an
+  error object rethrown from a second place keeps its first throw site.
 
 ---
 

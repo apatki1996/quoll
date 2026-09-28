@@ -120,6 +120,86 @@ setTimeout(function tick() {
   const t = 1 + 1; //=> 2 //^ tick
 }, 1);
 
+// A body's function declarations stay function-scoped under the framing: in a
+// block, `var` + `function` of one name would be a redeclaration error.
+function shadowed() {
+  var g = 1;
+  function g() {}
+  return g; //=> 1
+}
+shadowed();
+
+// Implicit awaits suspend too. Each probe runs while one of these is
+// suspended, so the suspended function must be missing from its stack.
+// An async generator's `return x` awaits x before finishing.
+async function* returnsLate() {
+  return new Promise((ok) => setTimeout(ok, 5));
+}
+function probeReturn() {
+  return 1; //^ probeReturn < (top level)
+}
+returnsLate().next();
+probeReturn();
+// `await using` awaits its disposal at the end of the block.
+async function disposes() {
+  await using res = {
+    async [Symbol.asyncDispose]() {
+      await new Promise((ok) => setTimeout(ok, 5));
+    },
+  };
+  return 1;
+}
+// The `await using` rewrite nests the rest of the block, so it must never
+// change what a name means: a closure reading a later `const` keeps working
+// (the rewrite stands down), and a later function declaration stays hoisted.
+async function keepsScope() {
+  const read = () => late;
+  await using res = { async [Symbol.asyncDispose]() {} };
+  const late = "late";
+  return read(); //=> "late"
+}
+keepsScope();
+async function keepsHoisting() {
+  const early = helper();
+  await using res = { async [Symbol.asyncDispose]() {} };
+  function helper() {
+    return "hoisted";
+  }
+  return early; //=> "hoisted"
+}
+keepsHoisting();
+function probeDispose() {
+  return 1; //^ probeDispose < (top level)
+}
+disposes();
+probeDispose();
+
+// Leaving a `for await` for an OUTER label still resumes the frame.
+async function breaksOut() {
+  outer: {
+    for await (const x of [1, 2]) {
+      break outer;
+    }
+  }
+  return "after"; //=> "after" //^ breaksOut
+}
+breaksOut();
+
+// After a top-level await the module body runs inside a microtask. A reaction
+// queued before it resumed was not called by it…
+function fromReaction() {
+  return 2; //=> 2 //^ fromReaction < (anonymous)
+}
+await null;
+const settled = Promise.resolve();
+settled.then(() => 0).then(() => fromReaction());
+await settled;
+// …while a call made by the resumed statement itself was.
+function fromResumed(v: number) {
+  return v; //=> 5 //^ fromResumed < (top level)
+}
+const resumed = fromResumed(await 5);
+
 // An error's stack is where it was THROWN, not where it was reported.
 function fail() {
   throw new Error("last"); //! last //^ fail < (top level)

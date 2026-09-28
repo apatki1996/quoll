@@ -1,7 +1,7 @@
 // Value-graph model + layout unit tests: `mise exec -- deno test src/graph/`
 import { strict as assert } from "node:assert";
 import type { RemoteValue } from "../../protocol/index.ts";
-import { layoutGraph } from "./layout.ts";
+import { HEADER, layoutGraph, ROW } from "./layout.ts";
 import { AUTO_DEPTH, buildGraph, MAX_FIELDS, pathKey, type Expand } from "./model.ts";
 
 /** An object reference as the runner would serialize it. */
@@ -126,9 +126,14 @@ Deno.test("wide objects are cut to MAX_FIELDS and counted", async () => {
   assert.equal(node.more, 5);
 });
 
-Deno.test("an expansion error is kept on the node, not thrown", async () => {
+Deno.test("an expansion error is kept on the node, and laid out with room to show it", async () => {
   const graph = await buildGraph(ref("gone"), heap({}).expand);
   assert.equal(graph.nodes.get("gone")!.error, "evicted");
+  // The page draws the error as the node's first row; a header-only box
+  // would clip it out of sight.
+  const [node] = layoutGraph(graph).nodes;
+  assert.equal(node!.error, "evicted");
+  assert.ok(node!.height >= HEADER + ROW, `height ${node!.height} leaves no row for the error`);
 });
 
 Deno.test("layout: columns by depth, and a list's links run level", async () => {

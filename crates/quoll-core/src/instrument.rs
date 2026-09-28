@@ -15,15 +15,28 @@
 //!   `const __quoll_f = __quoll.enter(id); try { body }
 //!    catch (__quoll_e) { __quoll.unwind(__quoll_f, __quoll_e); throw __quoll_e; }
 //!    finally { __quoll.leave(__quoll_f); }`
-//!   so the runner can keep a shadow call stack. Inside async functions and
-//!   generators, each `await`/`yield` additionally becomes
-//!   `__quoll.resume(__quoll_f, await __quoll.suspend(__quoll_f, arg))`: a
-//!   suspended frame is OFF the stack until it resumes, or the code that runs
-//!   meanwhile would be reported as running inside it. Paths that re-enter a
-//!   suspended frame without passing through `resume` — a rejected `await`
-//!   landing in a `catch`/`finally`, the implicit awaits of `for await` — get
-//!   an idempotent `__quoll.reenter(__quoll_f)`; `for await` also suspends
-//!   explicitly, since its awaits appear nowhere in the source.
+//!   (the body's own function declarations hoisted above it) so the runner
+//!   can keep a shadow call stack.
+//! - suspensions (phase 11): a suspended frame is OFF the stack until it
+//!   resumes, or the code that runs meanwhile would be reported as running
+//!   inside it. So every point where an async function or generator can
+//!   suspend is marked, the implicit ones included:
+//!   - `await x` / `yield x` → `__quoll.resume(f, await __quoll.suspend(f, x))`;
+//!   - an async generator's `return x` (which awaits `x`) → `return __quoll.suspend(f, x)`;
+//!   - `for await` suspends on its iterable and at the end of every
+//!     iteration, and resumes at the top of the body and in a `finally`
+//!     around the whole loop (so a labelled jump out of it resumes too);
+//!   - `await using` disposal is bracketed by two synchronous `using`
+//!     resources, which disposal order runs just before and just after it;
+//!   - paths that re-enter without passing through any of those — a rejected
+//!     `await` landing in a `catch`/`finally` — get an idempotent
+//!     `__quoll.reenter(f)`.
+//!
+//!   The module body gets the same treatment for top-level `await` (as
+//!   `topSuspend`/`topResume`, since it has no frame) plus a `topSuspend` at
+//!   its end: while it's suspended or finished, nothing that runs was called
+//!   by it. Every rewrite passes the operand through untouched, so none adds
+//!   a microtask tick.
 //!
 //! Value sites carry an opt-in KIND (`expr` by default; `comment`/`perf` from
 //! `//?`/`//?.`; `selection`/`logpoint` from caller-supplied `extra_sites`).
@@ -36,7 +49,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use oxc_allocator::{Allocator, Vec as ArenaVec};
+use oxc_allocator::{Allocator, GetAllocator, Vec as ArenaVec};
 use oxc_ast::ast::*;
 use oxc_ast::builder::AstBuilder;
 use oxc_ast_visit::VisitMut;
@@ -52,6 +65,27 @@ const FRAME: &str = "__quoll_f";
 const THROWN: &str = "__quoll_e";
 /// A function neither declared with a name nor put somewhere that names it.
 const ANONYMOUS: &str = "(anonymous)";
+
+/// What an enclosing function is, for the suspension rewrites.
+#[derive(Clone, Copy)]
+struct FnKind {
+    /// Async or a generator: an `await`/`yield` can suspend it.
+    suspends: bool,
+    /// An async generator, whose `return x` awaits `x` implicitly.
+    async_generator: bool,
+}
+
+/// What a suspension point in the current position takes off the stack.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Suspender {
+    /// The enclosing async function or generator's frame.
+    Frame,
+    /// The module body itself (top-level `await`): not a frame, but while it
+    /// is suspended nothing it calls can be "called from the top level".
+    Module,
+    /// A synchronous function: nothing here can suspend.
+    Never,
+}
 
 /// Everything the pass needs to tag a value site beyond the AST itself: the
 /// `//?`/`//?.` annotations read from the source comments, plus the caller's
@@ -113,10 +147,11 @@ pub struct Instrumenter<'a> {
     names: HashMap<u32, String>,
     /// Names of the enclosing classes, innermost last (`C.method`).
     classes: Vec<Option<String>>,
-    /// One entry per enclosing function, innermost last: can it SUSPEND
-    /// (async or generator)? Empty = module top level, where an `await` has no
-    /// frame to suspend.
-    frames: Vec<bool>,
+    /// One entry per enclosing function, innermost last. Empty = the module
+    /// body, whose top-level `await`s suspend the MODULE rather than a frame.
+    frames: Vec<FnKind>,
+    /// `await using` brackets emitted so far — numbers their resource names.
+    disposers: u32,
 }
 
 impl<'a> Instrumenter<'a> {
@@ -159,6 +194,7 @@ impl<'a> Instrumenter<'a> {
             names: HashMap::new(),
             classes: Vec::new(),
             frames: Vec::new(),
+            disposers: 0,
         }
     }
 
@@ -250,10 +286,168 @@ impl<'a> Instrumenter<'a> {
         Statement::new_expression_statement(span, self.frame_call(method, None, span), &self.ast)
     }
 
+    /// `__quoll.<method>([<arg>])` — the module-body calls, which name no frame.
+    fn module_call(
+        &self,
+        method: &'static str,
+        arg: Option<Expression<'a>>,
+        span: Span,
+    ) -> Expression<'a> {
+        let object = Expression::new_identifier(span, "__quoll", &self.ast);
+        let property = IdentifierName::new(span, method, &self.ast);
+        let callee =
+            Expression::new_static_member_expression(span, object, property, false, &self.ast);
+        let mut args = ArenaVec::with_capacity_in(1, &self.ast);
+        if let Some(a) = arg {
+            args.push(Argument::from(a));
+        }
+        Expression::new_call_expression(span, callee, None, args, false, &self.ast)
+    }
+
     /// Inside an async function or generator — where an `await`/`yield` can
     /// take the current frame off the stack?
     fn can_suspend(&self) -> bool {
-        self.frames.last().copied().unwrap_or(false)
+        self.suspender() == Suspender::Frame
+    }
+
+    fn suspender(&self) -> Suspender {
+        match self.frames.last() {
+            None => Suspender::Module,
+            Some(kind) if kind.suspends => Suspender::Frame,
+            Some(_) => Suspender::Never,
+        }
+    }
+
+    /// Take the current frame (or the module body) off the stack, passing
+    /// `arg` through: `__quoll.suspend(__quoll_f, arg)` / `__quoll.topSuspend(arg)`.
+    fn suspend_call(
+        &self,
+        by: Suspender,
+        arg: Option<Expression<'a>>,
+        span: Span,
+    ) -> Expression<'a> {
+        match by {
+            Suspender::Module => self.module_call("topSuspend", arg, span),
+            _ => self.frame_call("suspend", arg, span),
+        }
+    }
+
+    /// Put it back, passing `arg` through. Idempotent, so it doubles as the
+    /// re-entry for paths that resume without passing through an `await`.
+    fn resume_call(
+        &self,
+        by: Suspender,
+        arg: Option<Expression<'a>>,
+        span: Span,
+    ) -> Expression<'a> {
+        match by {
+            Suspender::Module => self.module_call("topResume", arg, span),
+            _ => self.frame_call("resume", arg, span),
+        }
+    }
+
+    fn call_statement(&self, call: Expression<'a>, span: Span) -> Statement<'a> {
+        Statement::new_expression_statement(span, call, &self.ast)
+    }
+
+    /// `try { <stmt> } finally { <on_exit> }` — runs `on_exit` however the
+    /// statement is left, labelled `break`/`continue` to an outer target
+    /// included.
+    fn try_finally(
+        &self,
+        body: ArenaVec<'a, Statement<'a>>,
+        on_exit: Statement<'a>,
+        span: Span,
+    ) -> Statement<'a> {
+        let mut finalizer = ArenaVec::with_capacity_in(1, &self.ast);
+        finalizer.push(on_exit);
+        Statement::new_try_statement(
+            span,
+            BlockStatement::boxed(span, body, &self.ast),
+            None,
+            Some(BlockStatement::boxed(span, finalizer, &self.ast)),
+            &self.ast,
+        )
+    }
+
+    /// `await using` disposal awaits at the end of its block, which nothing in
+    /// the source marks. Resources are disposed in REVERSE declaration order,
+    /// so two synchronous `using` resources bracket it exactly, with no change
+    /// to scoping and no extra tick:
+    ///
+    /// ```js
+    /// using __quoll_rN = __quoll.resuming(__quoll_f);   // disposed LAST
+    /// await using a = …;  …  await using b = …;
+    /// using __quoll_sN = __quoll.suspending(__quoll_f); // disposed FIRST
+    /// ```
+    ///
+    /// The first suspends the frame as disposal starts; the last runs, in the
+    /// continuation, once every async disposal has been awaited, and resumes
+    /// it. A synchronous resource adds no `Await` of its own when disposed
+    /// (DisposeResources awaits only for async-dispose resources, and a
+    /// `null` one), so the program's microtask order is unchanged. If the
+    /// block is left before the last `await using` is declared, the
+    /// suspending resource was never registered and the resuming one is a
+    /// harmless re-entry. Names are numbered: a `switch`'s cases share a scope.
+    fn bracket_await_using(
+        &mut self,
+        by: Suspender,
+        stmts: ArenaVec<'a, Statement<'a>>,
+    ) -> ArenaVec<'a, Statement<'a>> {
+        let (Some(first), Some(last)) = (
+            stmts.iter().position(is_await_using),
+            stmts.iter().rposition(is_await_using),
+        ) else {
+            return stmts;
+        };
+        self.disposers += 1;
+        let n = self.disposers;
+        let mut out = ArenaVec::with_capacity_in(stmts.len() + 2, &self.ast);
+        for (i, stmt) in stmts.into_iter().enumerate() {
+            let span = stmt.span();
+            if i == first {
+                out.push(self.disposer(by, "resuming", format!("__quoll_r{n}"), span));
+            }
+            out.push(stmt);
+            if i == last {
+                out.push(self.disposer(by, "suspending", format!("__quoll_s{n}"), span));
+            }
+        }
+        out
+    }
+
+    /// `using <name> = __quoll.<method>(__quoll_f)` (the `top…` method, with
+    /// no frame, in the module body).
+    fn disposer(
+        &self,
+        by: Suspender,
+        method: &'static str,
+        name: String,
+        span: Span,
+    ) -> Statement<'a> {
+        let init = match (by, method) {
+            (Suspender::Module, "resuming") => self.module_call("topResuming", None, span),
+            (Suspender::Module, _) => self.module_call("topSuspending", None, span),
+            _ => self.frame_call(method, None, span),
+        };
+        let name = self.ast.allocator().alloc_str(&name);
+        let declarator = VariableDeclarator::new(
+            span,
+            BindingPattern::new_binding_identifier(span, name, &self.ast),
+            None,
+            Some(init),
+            false,
+            &self.ast,
+        );
+        let mut declarators = ArenaVec::with_capacity_in(1, &self.ast);
+        declarators.push(declarator);
+        Statement::new_variable_declaration(
+            span,
+            VariableDeclarationKind::Using,
+            declarators,
+            false,
+            &self.ast,
+        )
     }
 
     /// Record the name a function or class takes from where it was put, if
@@ -292,16 +486,30 @@ impl<'a> Instrumenter<'a> {
     /// return, throw, a generator's `.return()` — passes through it. The
     /// `catch` rethrows the SAME value, so it is invisible to the program; it
     /// exists so the runner can snapshot the stack at the throw, before the
-    /// `finally`s below it unwind the frames away. Function declarations
-    /// nested in the body move into the `try` block with everything else,
-    /// which in strict code (modules always are) hoists them to the top of
-    /// that block — still above every statement that could call them.
+    /// `finally`s below it unwind the frames away.
+    ///
+    /// The body's own function declarations stay OUTSIDE the `try`, above the
+    /// `const`: inside a block they would become block-scoped, which is not
+    /// the same thing — `var g; function g() {}` in one body is legal, and
+    /// would be a redeclaration error in a block. Hoisting makes their
+    /// position irrelevant, so moving them up changes nothing else. (Their
+    /// coverage counters stay where they were.)
     fn framed(
         &self,
         id: u32,
         span: Span,
         body: ArenaVec<'a, Statement<'a>>,
     ) -> ArenaVec<'a, Statement<'a>> {
+        let mut functions = ArenaVec::new_in(&self.ast);
+        let mut statements = ArenaVec::with_capacity_in(body.len(), &self.ast);
+        for stmt in body {
+            if matches!(stmt, Statement::FunctionDeclaration(_)) {
+                functions.push(stmt);
+            } else {
+                statements.push(stmt);
+            }
+        }
+        let body = statements;
         let enter = self.quoll_call("enter", id, None, span);
         let declarator = VariableDeclarator::new(
             span,
@@ -351,7 +559,8 @@ impl<'a> Instrumenter<'a> {
             &self.ast,
         );
 
-        let mut out = ArenaVec::with_capacity_in(2, &self.ast);
+        let mut out = ArenaVec::with_capacity_in(functions.len() + 2, &self.ast);
+        out.extend(functions);
         out.push(declaration);
         out.push(attempt);
         out
@@ -365,21 +574,25 @@ impl<'a> Instrumenter<'a> {
     /// caller's for a generator's `.next()`). The awaited value passes through
     /// both calls untouched, so the program sees no extra tick and no wrapper.
     /// A rejected `await` never reaches `resume`; see `reenter_at`.
-    fn wrap_suspension(&mut self, expr: &mut Expression<'a>) {
+    ///
+    /// A top-level `await` gets the same pair with `topSuspend`/`topResume`:
+    /// no frame, but while the module body is suspended, nothing that runs
+    /// was called by it.
+    fn wrap_suspension(&mut self, by: Suspender, expr: &mut Expression<'a>) {
         let span = expr.span();
         let mut suspended = self.take_expression(expr);
         match &mut suspended {
             Expression::AwaitExpression(await_expr) => {
                 let arg = self.take_expression(&mut await_expr.argument);
-                await_expr.argument = self.frame_call("suspend", Some(arg), span);
+                await_expr.argument = self.suspend_call(by, Some(arg), span);
             }
             Expression::YieldExpression(yield_expr) => {
                 let arg = yield_expr.argument.take();
-                yield_expr.argument = Some(self.frame_call("suspend", arg, span));
+                yield_expr.argument = Some(self.suspend_call(by, arg, span));
             }
             _ => unreachable!("wrap_suspension is only called on await/yield"),
         }
-        *expr = self.frame_call("resume", Some(suspended), span);
+        *expr = self.resume_call(by, Some(suspended), span);
     }
 
     /// Prepend an idempotent `__quoll.reenter(__quoll_f)` to a block that can
@@ -532,6 +745,12 @@ impl<'a> Instrumenter<'a> {
     }
 }
 
+/// An `await using` declaration.
+fn is_await_using(stmt: &Statement) -> bool {
+    matches!(stmt, Statement::VariableDeclaration(decl)
+        if decl.kind == VariableDeclarationKind::AwaitUsing)
+}
+
 /// A `for await` loop, labelled or not.
 fn is_for_await(stmt: &Statement) -> bool {
     match stmt {
@@ -558,35 +777,56 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
     fn visit_statements(&mut self, stmts: &mut ArenaVec<'a, Statement<'a>>) {
         walk_mut::walk_statements(self, stmts); // children first
 
+        let by = self.suspender();
         let old = std::mem::replace(stmts, ArenaVec::new_in(&self.ast));
         let mut rebuilt = ArenaVec::with_capacity_in(old.len() * 2, &self.ast);
         for stmt in old {
             if !matches!(stmt, Statement::ImportDeclaration(_)) {
                 rebuilt.push(self.cover_statement(stmt.span()));
             }
-            // A `for await` suspends on its last `next()` too, and nothing
-            // after the loop passes through `resume` — so the statement after
-            // it re-enters. (Its body is handled in visit_for_of_statement.)
-            let after = self.can_suspend() && is_for_await(&stmt);
-            let span = stmt.span();
-            rebuilt.push(stmt);
-            if after {
-                rebuilt.push(self.frame_statement("reenter", span));
+            if by != Suspender::Never && is_for_await(&stmt) {
+                // A `for await` suspends on its last `next()` too, and leaving
+                // it passes through no `resume` — however it's left: normal
+                // end, `break`, or a labelled jump to a target outside it. So
+                // the whole loop goes in a `finally` that resumes. (Its body
+                // is handled in visit_for_of_statement.)
+                let span = stmt.span();
+                let mut body = ArenaVec::with_capacity_in(1, &self.ast);
+                body.push(stmt);
+                let resume = self.call_statement(self.resume_call(by, None, span), span);
+                rebuilt.push(self.try_finally(body, resume, span));
+            } else {
+                rebuilt.push(stmt);
             }
         }
-        *stmts = rebuilt;
+        *stmts = if by == Suspender::Never {
+            rebuilt
+        } else {
+            self.bracket_await_using(by, rebuilt)
+        };
+    }
+
+    fn visit_program(&mut self, program: &mut Program<'a>) {
+        walk_mut::walk_program(self, program);
+        // The module body is done running: nothing that runs after this was
+        // called by it. (The runner's microtask-deferred clear is the
+        // fallback for a body that throws before getting here.)
+        if let Some(span) = program.body.last().map(GetSpan::span) {
+            let done = self.call_statement(self.module_call("topSuspend", None, span), span);
+            program.body.push(done);
+        }
     }
 
     fn visit_expression(&mut self, expr: &mut Expression<'a>) {
         walk_mut::walk_expression(self, expr);
-        // Top-level `await` has no frame: the module body is not a function.
-        if !self.frames.is_empty()
+        let by = self.suspender();
+        if by != Suspender::Never
             && matches!(
                 expr,
                 Expression::AwaitExpression(_) | Expression::YieldExpression(_)
             )
         {
-            self.wrap_suspension(expr);
+            self.wrap_suspension(by, expr);
         }
     }
 
@@ -603,7 +843,10 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
             .map(|id| id.name.to_string())
             .or_else(|| self.names.remove(&func.span.start))
             .unwrap_or_else(|| ANONYMOUS.to_string());
-        self.frames.push(func.r#async || func.generator);
+        self.frames.push(FnKind {
+            suspends: func.r#async || func.generator,
+            async_generator: func.r#async && func.generator,
+        });
         walk_mut::walk_function(self, func, flags);
         self.frames.pop();
         let id = self.new_function_site(func.span, name);
@@ -744,30 +987,26 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
     fn visit_for_of_statement(&mut self, for_of: &mut ForOfStatement<'a>) {
         self.ensure_block(&mut for_of.body);
         walk_mut::walk_for_of_statement(self, for_of);
-        if !for_of.r#await || !self.can_suspend() {
+        let by = self.suspender();
+        if !for_of.r#await || by == Suspender::Never {
             return;
         }
         // A `for await` awaits `next()` before EVERY iteration, the first one
         // included, and nothing in the source marks those awaits. So the
-        // frame suspends once the iterable is handed over, and again at the
-        // end of each iteration (a `finally`, so `continue` suspends too);
-        // it re-enters at the top of the body, and after the loop.
+        // frame (or the module body) suspends once the iterable is handed
+        // over, and again at the end of each iteration (a `finally`, so
+        // `continue` suspends too); it resumes at the top of the body, and
+        // wherever the loop is left (see visit_statements).
         let right_span = for_of.right.span();
         let right = self.take_expression(&mut for_of.right);
-        for_of.right = self.frame_call("suspend", Some(right), right_span);
+        for_of.right = self.suspend_call(by, Some(right), right_span);
         if let Statement::BlockStatement(body) = &mut for_of.body {
             let span = body.span;
             let stmts = std::mem::replace(&mut body.body, ArenaVec::new_in(&self.ast));
-            let mut on_exit = ArenaVec::with_capacity_in(1, &self.ast);
-            on_exit.push(self.frame_statement("suspend", span));
-            let iteration = Statement::new_try_statement(
-                span,
-                BlockStatement::boxed(span, stmts, &self.ast),
-                None,
-                Some(BlockStatement::boxed(span, on_exit, &self.ast)),
-                &self.ast,
-            );
-            body.body.push(self.frame_statement("reenter", span));
+            let suspend = self.call_statement(self.suspend_call(by, None, span), span);
+            let iteration = self.try_finally(stmts, suspend, span);
+            body.body
+                .push(self.call_statement(self.resume_call(by, None, span), span));
             body.body.push(iteration);
         }
     }
@@ -784,8 +1023,17 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
 
     fn visit_return_statement(&mut self, ret: &mut ReturnStatement<'a>) {
         walk_mut::walk_return_statement(self, ret);
+        let async_generator = self.frames.last().is_some_and(|k| k.async_generator);
         if let Some(arg) = &mut ret.argument {
             self.wrap_value(arg);
+            // An async generator's `return x` awaits `x` before its `finally`s
+            // run — a suspension nothing in the source marks. The frame leaves
+            // once `x` is evaluated; the `finally`s re-enter it.
+            if async_generator {
+                let span = arg.span();
+                let value = self.take_expression(arg);
+                *arg = self.frame_call("suspend", Some(value), span);
+            }
         }
     }
 
@@ -801,7 +1049,10 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
             .names
             .remove(&arrow.span.start)
             .unwrap_or_else(|| ANONYMOUS.to_string());
-        self.frames.push(arrow.r#async);
+        self.frames.push(FnKind {
+            suspends: arrow.r#async,
+            async_generator: false,
+        });
         if arrow.body.is_expression() {
             // Expression-bodied arrow: the body expression IS the implicit
             // return. No statement site here (a cover statement would have

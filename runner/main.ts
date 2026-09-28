@@ -335,6 +335,24 @@ function installQuollRuntime(): void {
     resume: <T>(frame: Frame, value: T): T => stack.resume(frame, value),
     reenter: (frame: Frame): void => stack.reenter(frame),
     unwind: (frame: Frame, thrown: unknown): void => stack.unwind(frame, thrown),
+    topSuspend: <T>(value?: T): T | undefined => stack.topSuspend(value),
+    topResume: <T>(value: T): T => stack.topResume(value),
+    // `await using` brackets: synchronous resources whose disposal marks
+    // where the async disposal between them starts and ends.
+    suspending: (frame: Frame): Disposable => disposing(() => stack.suspend(frame)),
+    resuming: (frame: Frame): Disposable => disposing(() => stack.reenter(frame)),
+    topSuspending: (): Disposable => disposing(() => stack.topSuspend()),
+    topResuming: (): Disposable => disposing(() => stack.topResume(undefined)),
+  };
+}
+
+/** A synchronous resource whose disposal runs `onDispose` — and nothing else:
+ * no return value, so disposing it can't add an `Await`. */
+function disposing(onDispose: () => void): Disposable {
+  return {
+    [Symbol.dispose]() {
+      onDispose();
+    },
   };
 }
 

@@ -55,6 +55,17 @@ export class GraphView implements vscode.WebviewViewProvider, vscode.Disposable 
 
   setSession(session: QuollSession | undefined): void {
     this.sessionSub?.dispose();
+    if (session !== this.session) {
+      // A target belongs to its session. Run generations restart at 1 in
+      // every session and objectIds restart at o1 in every runner, so an old
+      // target would resolve against the new session as if it were current —
+      // drawing an unrelated object, or another file's line.
+      this.target = undefined;
+      this.expansion = { opened: new Set(), closed: new Set() };
+      this.lastOpenPaths = new Set();
+      this.drawn = undefined;
+      this.build++; // and a build still expanding against the old runner is void
+    }
     this.session = session;
     this.sessionSub = session?.onDidUpdate(() => void this.redraw());
     void this.redraw();
@@ -98,6 +109,7 @@ export class GraphView implements vscode.WebviewViewProvider, vscode.Disposable 
   private async redraw(force = false): Promise<boolean> {
     const resolved = this.resolve();
     if ("message" in resolved) {
+      this.build++; // a build still expanding must not paint over this
       this.drawn = undefined;
       this.last = { state: "empty", message: resolved.message };
       this.post();

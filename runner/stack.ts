@@ -43,10 +43,12 @@ export class ShadowStack {
   /**
    * Is the module body running right now? An empty stack means top-level code
    * OR the event loop, and only the first calls into anything from a
-   * position. Set by top-level `cover` and cleared at the next microtask
-   * checkpoint — which the module body only reaches when it finishes or hits
-   * a top-level `await`, and which runs before any timer or reaction that
-   * could otherwise inherit it.
+   * position. Set by top-level `cover` and `topResume`; cleared by
+   * `topSuspend`, which the Rust pass puts at every top-level `await` and at
+   * the end of the module. (A clear at the next microtask checkpoint backs
+   * that up for a body that throws part-way — but only backs it up: once a
+   * top-level `await` has resumed, the module runs INSIDE a microtask, and
+   * reactions already queued would run before that clear.)
    */
   private topActive = false;
   private readonly defer: (cb: () => void) => void;
@@ -100,6 +102,22 @@ export class ShadowStack {
     this.frames.push(frame);
   }
 
+  /**
+   * The module body suspended at a top-level `await` (or finished): whatever
+   * runs until it resumes was not called by it. Returns `value` untouched.
+   */
+  topSuspend<T>(value?: T): T | undefined {
+    this.topActive = false;
+    return value;
+  }
+
+  /** The module body resumed from a top-level `await`: calls it makes now
+   * come from the statement it was suspended in. Returns `value` untouched. */
+  topResume<T>(value: T): T {
+    this.markTop();
+    return value;
+  }
+
   /** A statement or branch site was entered: that is where the top frame is. */
   cover(siteId: number): void {
     const top = this.frames[this.frames.length - 1];
@@ -108,12 +126,17 @@ export class ShadowStack {
       return;
     }
     this.topAt = siteId;
-    if (!this.topActive) {
-      this.topActive = true;
-      this.defer(() => {
-        this.topActive = false;
-      });
-    }
+    this.markTop();
+  }
+
+  /** The module body is running. The deferred clear is only a fallback now —
+   * `topSuspend` clears it exactly — for a body that throws part-way. */
+  private markTop(): void {
+    if (this.topActive) return;
+    this.topActive = true;
+    this.defer(() => {
+      this.topActive = false;
+    });
   }
 
   /**
@@ -124,6 +147,11 @@ export class ShadowStack {
    */
   unwind(frame: Frame, thrown: unknown): void {
     this.reenter(frame);
+    // A throw leaving a frame the MODULE BODY called is about to land in the
+    // module body — which, if it doesn't catch it, stops right there, and the
+    // `topSuspend` at its end never runs. If it does catch it, the catch
+    // block's first statement marks the body running again.
+    if (this.frames[0] === frame && frame.from !== undefined) this.topActive = false;
     if ((typeof thrown === "object" && thrown !== null) || typeof thrown === "function") {
       if (!this.thrown.has(thrown)) this.thrown.set(thrown, this.snapshot());
     }

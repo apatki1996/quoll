@@ -20,9 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   happened in. Rows are banded by function and indented by call depth, with
   the function named wherever the call changes, so recursion and callbacks
   read at a glance. Select a moment to see its full call stack beside the
-  list; click a frame to jump to its line. Async functions and generators are
-  shown truthfully: while one is awaiting, it isn't on the stack of the code
-  that runs in the meantime. (Phase 11, completing the Timeline.)
+  list; click a frame to jump to its line. While an async function or
+  generator is suspended — at an `await`, a `yield`, a `for await`, or an
+  `await using` disposal — it isn't on the stack of the code that runs in the
+  meantime. (Phase 11, completing the Timeline.)
 - **A Quoll panel** — the Values tree and the Timeline now live in a *Quoll*
   tab in the bottom panel, beside Problems and Terminal, instead of the primary
   side bar. That's where a run's output belongs: it gets horizontal room for

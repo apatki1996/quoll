@@ -113,3 +113,27 @@ Deno.test("deep recursion sends the innermost frames and the real depth", () => 
   );
   assert.equal(stackDepth, MAX_FRAMES + 10);
 });
+
+Deno.test("a top-level await ends the module's claim on the calls that follow", () => {
+  const { stack } = manual();
+  stack.cover(5);
+  stack.topSuspend(); // `await` at top level: no checkpoint needed to clear it
+  const reaction = stack.enter(2); // a reaction queued before the module resumed
+  assert.deepEqual(stack.snapshot(), { frames: [{ fn: 2 }] });
+  stack.leave(reaction);
+  // Resumed: a call made by the resumed statement IS from the top level, even
+  // before the next statement's cover.
+  assert.equal(stack.topResume(7), 7);
+  stack.enter(3);
+  assert.deepEqual(stack.snapshot(), { frames: [{ at: 5 }, { fn: 3 }] });
+});
+
+Deno.test("a throw escaping into the module body ends its claim, too", () => {
+  const { stack } = manual();
+  stack.cover(5);
+  const called = stack.enter(1);
+  stack.unwind(called, new Error("uncaught")); // the module body won't catch it…
+  stack.leave(called);
+  stack.enter(2); // …so the next call on an empty stack came from the event loop
+  assert.deepEqual(stack.snapshot(), { frames: [{ fn: 2 }] });
+});
