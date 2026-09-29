@@ -20,3 +20,13 @@ const named = 6 * 7; //== 42
 [1, 2].map((n) => n * 10); //== 10, 20
 const logged = 5 - 1; //~ covered //== 4
 ["🎯", "🎯"].map((s) => s + "!"); //== "🎯!", "🎯!"
+const {
+  first, //==
+  second, //==
+} = { first: 1, second: 2 }; //== { first: 1, second: 2 }
+const left = 1; const right = 2; //== 2
+//@select 24:4  — on a pattern name on a MIDDLE line of a destructuring, outside
+//   every capture and on neither end line of one: the innermost STATEMENT's
+//   own values answer, which the line fallback alone could never reach.
+//@select 27:22 — on the NAME `right`: its statement answers, so `left` on the
+//   same line stays quiet (the line fallback would reveal both).

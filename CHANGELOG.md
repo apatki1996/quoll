@@ -77,6 +77,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which is where opting a line in means anything — the `all` default already
   renders every expression.
 
+### Fixed
+
+- **Selecting a name inside a multi-line statement** — selecting `b` on the
+  middle line of `const {\n  a,\n  b\n} = obj` now reveals `obj`'s value
+  instead of nothing. A selection outside every expression shows the values
+  of the statement it's in, so selecting `y` in `const x = 1; const y = 2;`
+  reveals just `2`, not both.
+
 ## [0.0.1] - 2026-06-13
 
 Initial development release: single-file JS/TS scratchpads that run as you type.

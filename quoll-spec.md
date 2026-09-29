@@ -359,9 +359,7 @@ across runs and Time Machine steps. See DECISIONS "Phase 11 finished".
 
 **Known limitations** (each with a `DECISIONS.md` entry): out-of-order
 settlement of several promises captured at ONE site can mis-slot; Copy Value
-copies the rendered preview, not a deep serialization; a selection anchored on a
-MIDDLE line of a multi-line expression reveals nothing (the line fallback
-matches a site's start or end line only); browser mode needs a project to
+copies the rendered preview, not a deep serialization; browser mode needs a project to
 resolve jsdom from, so it does not work in a bare scratch buffer; a value graph
 (like the explorer) shows objects as they are when expanded, not as they were
 when captured.

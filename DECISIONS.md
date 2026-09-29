@@ -22,6 +22,38 @@ entry states what the screenshot showed, so the reasoning stands without it.
 
 ---
 
+## 2026-09-29 — Value-on-selection: an uncaptured anchor falls back to its statement [DECIDED]
+
+- **Context:** the Phase 9 entry recorded a known limitation — the line
+  fallback for an anchor no capture contained matches a site's START or END
+  line only, so a MIDDLE line reveals nothing. Probing it showed the entry's
+  own example was wrong: selecting `.map` on line 2 of a chain already works,
+  because the anchor's OFFSET lies inside the whole chain's capture span and
+  the innermost capture claims it. The real gap is an anchor outside every
+  capture span on a line no site starts or ends on — a name on the middle line
+  of a multi-line destructuring (`const {\n a,\n b\n} = obj`).
+- **Decision:** a second fallback tier between "a capture contains it" and
+  "its line": once a statement has been walked (so every capture inside it has
+  had its chance), an anchor still unclaimed inside it re-tags that
+  statement's OWN `expr` sites — not a nested statement's — and is settled,
+  so no enclosing statement reaches for it. The line fallback remains for what
+  that leaves: whitespace outside any statement, a statement with no values of
+  its own, a class or function declaration.
+- **Class and function declarations are a barrier:** their field initializers
+  and parameter defaults are directly theirs, so without one, selecting a
+  method name would reveal every field of the class. The anchor is settled
+  there with nothing tagged, and the line fallback decides.
+- **A side effect, kept:** `const left = 1; const right = 2;` with `right`
+  selected now reveals `2` only; the line fallback revealed both.
+- **Rejected:** *widening the line fallback to a site's whole line RANGE* —
+  it would tag every capture spanning the line, so an anchor inside a long
+  function body lights up the enclosing call. The statement is the smallest
+  unit that says "the values this code is about".
+- **Golden case:** `selection.ts` — the destructuring and the two-statement
+  line, each verified to FAIL with the statement tier disabled.
+- **Revisit if:** a statement kind besides class/function declarations turns
+  out to own enough sites that a stray selection reveals too much.
+
 ## 2026-09-27 — Phase 11 finished: a shadow call stack, and value graphs over `expand` [DECIDED]
 
 - **Context:** Phase 11a shipped the Timeline at line level and left two halves
