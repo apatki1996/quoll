@@ -110,10 +110,14 @@ pub struct Annotations {
 /// A selection anchor resolved to an absolute offset. `claimed` is what makes
 /// the INNERMOST containing capture win: children are visited before their
 /// parents, so by the time an outer capture asks, the anchor is already taken.
+/// `settled` does the same one level up, for an anchor no capture contained:
+/// the innermost STATEMENT around it has had its say (see `settle_selections`),
+/// so enclosing statements must not reach for it.
 struct Selection {
     offset: u32,
     line: u32,
     claimed: bool,
+    settled: bool,
 }
 
 pub struct SiteRec {
@@ -152,6 +156,13 @@ pub struct Instrumenter<'a> {
     frames: Vec<FnKind>,
     /// `await using` brackets emitted so far — numbers their resource names.
     disposers: u32,
+    /// (id, span) of the sites created directly under each enclosing
+    /// statement (not under a nested one), innermost last. Lets an anchor that
+    /// no capture contained fall back to its own statement's values.
+    owned: Vec<Vec<(u32, Span)>>,
+    /// Spans of every function, arrow and class visited so far: the
+    /// boundaries the statement fallback does not reach across.
+    scopes: Vec<Span>,
 }
 
 impl<'a> Instrumenter<'a> {
@@ -180,6 +191,7 @@ impl<'a> Instrumenter<'a> {
                     offset: start.saturating_add(column).min(end),
                     line,
                     claimed: false,
+                    settled: false,
                 }
             })
             .collect();
@@ -195,6 +207,8 @@ impl<'a> Instrumenter<'a> {
             classes: Vec::new(),
             frames: Vec::new(),
             disposers: 0,
+            owned: Vec::new(),
+            scopes: Vec::new(),
         }
     }
 
@@ -219,6 +233,9 @@ impl<'a> Instrumenter<'a> {
             kind,
             name: None,
         });
+        if let Some(owned) = self.owned.last_mut() {
+            owned.push((id, span));
+        }
         id
     }
 
@@ -646,14 +663,68 @@ impl<'a> Instrumenter<'a> {
         }
     }
 
-    /// Selection anchors that no capture span contained — the user selected a
-    /// variable NAME, a keyword, an indent — fall back to LINE granularity, so
-    /// double-clicking `x` in `const x = compute()` still reveals the line
-    /// instead of silently doing nothing. The fallback matches a site's START
-    /// or END line, so an anchor on a MIDDLE line of a multi-line expression
-    /// still reveals nothing; that case is recorded as a known limitation
-    /// rather than fixed, since widening it would tag whole chains at once.
-    /// Only `expr` sites are re-tagged:
+    /// A statement has been fully walked, so every capture inside it has
+    /// already had its chance to claim an anchor. Any anchor inside `span` that
+    /// is still unclaimed sat outside every capture — on a NAME, a keyword, a
+    /// destructuring pattern — and it falls back to the values of the
+    /// innermost statement around it: double-clicking `x` in
+    /// `const x = compute()` reveals `compute()`, and so does `b` on the middle
+    /// line of `const {\n a,\n b\n} = obj`, which no line-based rule can reach.
+    /// Because the innermost statement answers first, an anchor inside a
+    /// callback's statement is answered there, before the capture that wraps
+    /// the whole call gets to claim it.
+    ///
+    /// Only the statement's OWN values count, and never across a function,
+    /// arrow or class boundary inside it: not a nested statement's sites (an
+    /// anchor on the `if` keyword must not reveal its branch body), not a
+    /// concise arrow body's (one stray selection in
+    /// `export default [() => a, () => b]` must not reveal every callback),
+    /// and not at all when the anchor itself is inside such a boundary (a
+    /// method name in `const C = class { … }` is about the method, not the
+    /// `const`). An anchor that tags nothing here is settled all the same and
+    /// left to the line fallback.
+    fn settle_selections(&mut self, span: Span, owned: &[(u32, Span)]) {
+        for i in 0..self.selections.len() {
+            let sel = &self.selections[i];
+            if sel.claimed || sel.settled || sel.offset < span.start || sel.offset >= span.end {
+                continue;
+            }
+            let offset = sel.offset;
+            self.selections[i].settled = true;
+            // The boundaries nested in this statement; one around the anchor
+            // means the anchor belongs to that function, not to this statement.
+            let inner: Vec<Span> = self
+                .scopes
+                .iter()
+                .filter(|s| s.start >= span.start && s.end <= span.end)
+                .copied()
+                .collect();
+            let within = |s: &Span, o: u32| o >= s.start && o < s.end;
+            if inner.iter().any(|s| within(s, offset)) {
+                continue;
+            }
+            for &(id, site_span) in owned {
+                // Strictly inside: the capture OF an arrow shares its span and
+                // is this statement's own value.
+                if inner.iter().any(|s| {
+                    within(s, site_span.start) && site_span.end <= s.end && site_span != *s
+                }) {
+                    continue;
+                }
+                let site = &mut self.sites[id as usize];
+                if site.kind == "expr" || site.kind == "selection" {
+                    site.kind = "selection";
+                    self.selections[i].claimed = true;
+                }
+            }
+        }
+    }
+
+    /// The last resort for anchors that neither a capture nor a statement
+    /// claimed — whitespace after a `;`, a method name inside a class — is LINE
+    /// granularity, so the gesture still reveals something on its line instead
+    /// of silently doing nothing. It matches a site's START or END line.
+    /// Only `expr` sites are re-tagged, here and in `settle_selections`:
     /// `perf`, `branch` and `statement` encode mechanism rather than opt-in
     /// policy, and `comment` is opt-in already.
     pub fn resolve_unclaimed_selections(&mut self) {
@@ -774,6 +845,16 @@ fn is_console_call(expr: &Expression) -> bool {
 }
 
 impl<'a> VisitMut<'a> for Instrumenter<'a> {
+    fn visit_statement(&mut self, stmt: &mut Statement<'a>) {
+        let span = stmt.span();
+        self.owned.push(Vec::new());
+        walk_mut::walk_statement(self, stmt);
+        let owned = self.owned.pop().unwrap_or_default();
+        // Popped, not merged into the parent's list: a nested statement's
+        // sites are its own, or an anchor on `if` would reveal its branch body.
+        self.settle_selections(span, &owned);
+    }
+
     fn visit_statements(&mut self, stmts: &mut ArenaVec<'a, Statement<'a>>) {
         walk_mut::walk_statements(self, stmts); // children first
 
@@ -831,6 +912,7 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
     }
 
     fn visit_function(&mut self, func: &mut Function<'a>, flags: ScopeFlags) {
+        self.scopes.push(func.span);
         if func.body.is_none() {
             // An overload or `declare` — the transform strips these, but a
             // body-less function has no frame to keep either way.
@@ -857,6 +939,7 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
     }
 
     fn visit_class(&mut self, class: &mut Class<'a>) {
+        self.scopes.push(class.span);
         let name = class
             .id
             .as_ref()
@@ -1045,6 +1128,7 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
     }
 
     fn visit_arrow_function_expression(&mut self, arrow: &mut ArrowFunctionExpression<'a>) {
+        self.scopes.push(arrow.span);
         let name = self
             .names
             .remove(&arrow.span.start)
