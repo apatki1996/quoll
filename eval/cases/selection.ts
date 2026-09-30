@@ -30,3 +30,24 @@ const left = 1; const right = 2; //== 2
 //   own values answer, which the line fallback alone could never reach.
 //@select 27:22 — on the NAME `right`: its statement answers, so `left` on the
 //   same line stays quiet (the line fallback would reveal both).
+const Klass = class {
+  a = (() => 1)(); //==
+  m() { return 3; } //== 3
+  b = (() => 2)(); //==
+};
+new Klass().m();
+export default [
+  (() => 4)(), //== 4
+  (() => 5)(), //==
+];
+[1].forEach((n) => {
+  const sq = n * n; //== 1
+});
+//@select 35:2  — on a method NAME inside a class EXPRESSION: the anchor is
+//   inside a class boundary, so the `const` statement does not answer and the
+//   line fallback reveals the method's own value — not the arrow-bodied fields.
+//@select 40:1  — outside every capture in an `export default` array: the
+//   statement's values never cross into a concise arrow body, so only the
+//   anchor's line answers, not every callback in the array.
+//@select 44:8  — on `sq` inside a callback: the innermost statement answers
+//   before the capture wrapping the whole `forEach(...)` call can claim it.

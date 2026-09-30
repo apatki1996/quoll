@@ -32,17 +32,24 @@ entry states what the screenshot showed, so the reasoning stands without it.
   the innermost capture claims it. The real gap is an anchor outside every
   capture span on a line no site starts or ends on — a name on the middle line
   of a multi-line destructuring (`const {\n a,\n b\n} = obj`).
-- **Decision:** a second fallback tier between "a capture contains it" and
-  "its line": once a statement has been walked (so every capture inside it has
-  had its chance), an anchor still unclaimed inside it re-tags that
-  statement's OWN `expr` sites — not a nested statement's — and is settled,
-  so no enclosing statement reaches for it. The line fallback remains for what
-  that leaves: whitespace outside any statement, a statement with no values of
-  its own, a class or function declaration.
-- **Class and function declarations are a barrier:** their field initializers
-  and parameter defaults are directly theirs, so without one, selecting a
-  method name would reveal every field of the class. The anchor is settled
-  there with nothing tagged, and the line fallback decides.
+- **Decision:** a statement tier before the line fallback: once a statement
+  has been walked (so every capture inside it has had its chance), an anchor
+  still unclaimed inside it re-tags that statement's OWN `expr` sites — not a
+  nested statement's — and is settled, so no enclosing statement reaches for
+  it. Because statements settle innermost-first, this tier sits between the
+  captures INSIDE the statement and the captures around it: `sq` selected in
+  `[1].forEach((n) => { const sq = n * n; })` is answered by its own
+  statement (`1`), not by the capture of the whole `forEach(...)` call. The
+  line fallback remains for what the tier leaves.
+- **Never across a function, arrow or class boundary:** a concise arrow body
+  is a value site directly under whatever statement holds the arrow, so
+  without a boundary one stray selection in `export default [() => a, () =>
+  b]` revealed every callback, and a method name in `const C = class { … }`
+  revealed every arrow-bodied field (the first review of this change found
+  both). So sites strictly inside a nested function, arrow or class don't
+  count, and an anchor that is itself inside one is settled with nothing
+  tagged — it's about that function, not the statement. Class and function
+  DECLARATIONS fall out of the same rule rather than needing a special case.
 - **A side effect, kept:** `const left = 1; const right = 2;` with `right`
   selected now reveals `2` only; the line fallback revealed both.
 - **Rejected:** *widening the line fallback to a site's whole line RANGE* —
@@ -50,9 +57,11 @@ entry states what the screenshot showed, so the reasoning stands without it.
   function body lights up the enclosing call. The statement is the smallest
   unit that says "the values this code is about".
 - **Golden case:** `selection.ts` — the destructuring and the two-statement
-  line, each verified to FAIL with the statement tier disabled.
-- **Revisit if:** a statement kind besides class/function declarations turns
-  out to own enough sites that a stray selection reveals too much.
+  line, each verified to FAIL with the statement tier disabled; the class
+  expression and the `export default` array, each verified to FAIL without
+  the boundary rule.
+- **Revisit if:** some statement turns out to own enough sites OUTSIDE any
+  function boundary that a stray selection reveals too much.
 
 ## 2026-09-27 — Phase 11 finished: a shadow call stack, and value graphs over `expand` [DECIDED]
 

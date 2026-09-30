@@ -156,10 +156,13 @@ pub struct Instrumenter<'a> {
     frames: Vec<FnKind>,
     /// `await using` brackets emitted so far — numbers their resource names.
     disposers: u32,
-    /// Ids of the sites created directly under each enclosing statement (not
-    /// under a nested one), innermost last. Lets an anchor that no capture
-    /// contained fall back to its own statement's values.
-    owned: Vec<Vec<u32>>,
+    /// (id, span) of the sites created directly under each enclosing
+    /// statement (not under a nested one), innermost last. Lets an anchor that
+    /// no capture contained fall back to its own statement's values.
+    owned: Vec<Vec<(u32, Span)>>,
+    /// Spans of every function, arrow and class visited so far: the
+    /// boundaries the statement fallback does not reach across.
+    scopes: Vec<Span>,
 }
 
 impl<'a> Instrumenter<'a> {
@@ -205,6 +208,7 @@ impl<'a> Instrumenter<'a> {
             frames: Vec::new(),
             disposers: 0,
             owned: Vec::new(),
+            scopes: Vec::new(),
         }
     }
 
@@ -230,7 +234,7 @@ impl<'a> Instrumenter<'a> {
             name: None,
         });
         if let Some(owned) = self.owned.last_mut() {
-            owned.push(id);
+            owned.push((id, span));
         }
         id
     }
@@ -666,25 +670,47 @@ impl<'a> Instrumenter<'a> {
     /// innermost statement around it: double-clicking `x` in
     /// `const x = compute()` reveals `compute()`, and so does `b` on the middle
     /// line of `const {\n a,\n b\n} = obj`, which no line-based rule can reach.
+    /// Because the innermost statement answers first, an anchor inside a
+    /// callback's statement is answered there, before the capture that wraps
+    /// the whole call gets to claim it.
     ///
-    /// Only the statement's OWN sites count, never a nested statement's, so an
-    /// anchor on the `if` keyword cannot reveal the whole branch body.
-    /// Class and function declarations settle the anchor without tagging
-    /// anything: every field initializer is directly theirs, and selecting a
-    /// method name must not light up the whole class. Such an anchor (and one
-    /// in a statement with no values of its own) is left to the line fallback.
-    fn settle_selections(&mut self, span: Span, stmt: &Statement<'a>, owned: &[u32]) {
-        let barrier = is_declaration_barrier(stmt);
+    /// Only the statement's OWN values count, and never across a function,
+    /// arrow or class boundary inside it: not a nested statement's sites (an
+    /// anchor on the `if` keyword must not reveal its branch body), not a
+    /// concise arrow body's (one stray selection in
+    /// `export default [() => a, () => b]` must not reveal every callback),
+    /// and not at all when the anchor itself is inside such a boundary (a
+    /// method name in `const C = class { … }` is about the method, not the
+    /// `const`). An anchor that tags nothing here is settled all the same and
+    /// left to the line fallback.
+    fn settle_selections(&mut self, span: Span, owned: &[(u32, Span)]) {
         for i in 0..self.selections.len() {
             let sel = &self.selections[i];
             if sel.claimed || sel.settled || sel.offset < span.start || sel.offset >= span.end {
                 continue;
             }
+            let offset = sel.offset;
             self.selections[i].settled = true;
-            if barrier {
+            // The boundaries nested in this statement; one around the anchor
+            // means the anchor belongs to that function, not to this statement.
+            let inner: Vec<Span> = self
+                .scopes
+                .iter()
+                .filter(|s| s.start >= span.start && s.end <= span.end)
+                .copied()
+                .collect();
+            let within = |s: &Span, o: u32| o >= s.start && o < s.end;
+            if inner.iter().any(|s| within(s, offset)) {
                 continue;
             }
-            for &id in owned {
+            for &(id, site_span) in owned {
+                // Strictly inside: the capture OF an arrow shares its span and
+                // is this statement's own value.
+                if inner.iter().any(|s| {
+                    within(s, site_span.start) && site_span.end <= s.end && site_span != *s
+                }) {
+                    continue;
+                }
                 let site = &mut self.sites[id as usize];
                 if site.kind == "expr" || site.kind == "selection" {
                     site.kind = "selection";
@@ -790,24 +816,6 @@ impl<'a> Instrumenter<'a> {
     }
 }
 
-/// A declaration whose directly-owned sites span a whole body (see
-/// `settle_selections`), `export`ed or not.
-fn is_declaration_barrier(stmt: &Statement) -> bool {
-    match stmt {
-        Statement::ClassDeclaration(_) | Statement::FunctionDeclaration(_) => true,
-        Statement::ExportDeclaration(export) => matches!(
-            export.declaration,
-            Declaration::ClassDeclaration(_) | Declaration::FunctionDeclaration(_)
-        ),
-        Statement::ExportDefaultDeclaration(export) => matches!(
-            export.declaration,
-            ExportDefaultDeclarationKind::ClassDeclaration(_)
-                | ExportDefaultDeclarationKind::FunctionDeclaration(_)
-        ),
-        _ => false,
-    }
-}
-
 /// An `await using` declaration.
 fn is_await_using(stmt: &Statement) -> bool {
     matches!(stmt, Statement::VariableDeclaration(decl)
@@ -838,14 +846,13 @@ fn is_console_call(expr: &Expression) -> bool {
 
 impl<'a> VisitMut<'a> for Instrumenter<'a> {
     fn visit_statement(&mut self, stmt: &mut Statement<'a>) {
-        // Read the span first: visitors below may rewrap the statement.
         let span = stmt.span();
         self.owned.push(Vec::new());
         walk_mut::walk_statement(self, stmt);
         let owned = self.owned.pop().unwrap_or_default();
         // Popped, not merged into the parent's list: a nested statement's
         // sites are its own, or an anchor on `if` would reveal its branch body.
-        self.settle_selections(span, stmt, &owned);
+        self.settle_selections(span, &owned);
     }
 
     fn visit_statements(&mut self, stmts: &mut ArenaVec<'a, Statement<'a>>) {
@@ -905,6 +912,7 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
     }
 
     fn visit_function(&mut self, func: &mut Function<'a>, flags: ScopeFlags) {
+        self.scopes.push(func.span);
         if func.body.is_none() {
             // An overload or `declare` — the transform strips these, but a
             // body-less function has no frame to keep either way.
@@ -931,6 +939,7 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
     }
 
     fn visit_class(&mut self, class: &mut Class<'a>) {
+        self.scopes.push(class.span);
         let name = class
             .id
             .as_ref()
@@ -1119,6 +1128,7 @@ impl<'a> VisitMut<'a> for Instrumenter<'a> {
     }
 
     fn visit_arrow_function_expression(&mut self, arrow: &mut ArrowFunctionExpression<'a>) {
+        self.scopes.push(arrow.span);
         let name = self
             .names
             .remove(&arrow.span.start)
